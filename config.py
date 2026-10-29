@@ -13,7 +13,7 @@ PROJECT_ROOT = (
     if getattr(sys, "frozen", False)
     else Path(__file__).resolve().parent
 )
-APP_VERSION = "0.1.4"
+APP_VERSION = "0.1.5"
 DEFAULT_MODEL = "deepseek-flash"
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 

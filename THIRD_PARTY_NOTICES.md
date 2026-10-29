@@ -32,3 +32,5 @@ The source uses packages declared in `requirements.txt`, `requirements-desktop.t
 The portable release includes a `licenses` directory containing the runtime and installed dependency license information gathered by the packaging script. Review that directory when creating a release: an installed package's metadata can identify its license even when its wheel does not include the complete license text. Supplement missing notices from the corresponding upstream distribution before distributing that dependency.
 
 Microsoft Edge WebView2 is a separately installed runtime; it is not part of the project's MIT-licensed code.
+
+The first-run installer progress window in 0.1.5 also bundles Tcl/Tk 8.6.12. Its upstream notices are included as [Tcl](web/vendor/LICENSE-tcl.txt) and [Tk](web/vendor/LICENSE-tk.txt).

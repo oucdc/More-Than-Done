@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**Version 0.1.4 · Windows desktop learning workspace**
+**Version 0.1.5 · Windows desktop learning workspace**
 
 More Than Done is an educational AI agent that helps you understand a task, try it yourself, receive feedback, and build the ability to work independently. It combines a local project workspace, streaming chat, and a learning plan whose progress is recorded by the application.
 
@@ -19,11 +19,17 @@ More Than Done is an educational AI agent that helps you understand a task, try 
 ## Use the Windows release
 
 1. Download the Windows release ZIP from the [GitHub Releases page](https://github.com/oucdc/More-Than-Done/releases) and extract it to a writable folder.
-2. Open `MoreThanDone.exe`. The desktop window uses Microsoft Edge WebView2. The packaged app can open without a separate Python installation; executing Python tasks still requires an available Python interpreter.
+2. Open `MoreThanDone.exe`. The app detects Microsoft Edge WebView2 before opening. If missing, it asks to install it, downloads the official Microsoft bootstrapper, verifies its Microsoft digital signature, shows setup progress, and opens the workspace after successful installation. Existing installations start directly. The packaged app can open without a separate Python installation; executing Python tasks still requires an available Python interpreter.
 3. Open **设置与权限** to configure your API key, model, and service address. The code defaults to DeepSeek's API and the `deepseek-flash` model. A model must support tool calls to use workspace tools.
 4. Create a project and choose its workspace folder. A new installation starts with no projects.
 
 To upgrade, close every running copy before replacing the executable. Keep the existing `data` folder beside the new executable to retain settings and conversations. Do not include that folder when sharing the app with another person.
+
+First-time runtime installation needs internet access; this ZIP does not bundle a complete offline runtime. Failed setup provides the [Microsoft download page](https://developer.microsoft.com/microsoft-edge/webview2/#download-section). Install the Evergreen Standalone Installer x64 manually (it can be downloaded on another computer and copied over), then reopen the app. You do not need to open the Edge browser.
+
+## Where archives are stored
+
+Archived projects and conversations stay in `data/conversations.json` beside the EXE, marked as archived. Archiving does not move, compress, or copy the workspace folder; its files remain at the original location. Use **已归档** in the sidebar to restore records. Source runs use the source directory; `--data-dir` overrides the data directory. Archiving is not a backup: back up both `data` and workspace files. Never share personal `data` with a release because it can contain keys and private conversations.
 
 ## Run from source
 
@@ -72,7 +78,7 @@ Node.js is only needed for the JavaScript syntax check. Native layout checks use
 Build the Windows executable and assemble a portable release package:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.4-windows-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.5-windows-x64
 .\.venv\Scripts\python.exe -m scripts.package_release
 ```
 

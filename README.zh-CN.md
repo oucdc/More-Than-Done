@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**0.1.4 版 · Windows 桌面学习工作台**
+**0.1.5 版 · Windows 桌面学习工作台**
 
 More Than Done 是一款教育 AI Agent，帮助你理解任务、亲手尝试、获得反馈，并逐步独立完成。它把本地项目、流式聊天和由程序记录进度的学习计划放在同一个工作台中。
 
@@ -19,11 +19,17 @@ More Than Done 是一款教育 AI Agent，帮助你理解任务、亲手尝试�
 ## 使用 Windows 发行版
 
 1. 从[GitHub Releases 页面](https://github.com/oucdc/More-Than-Done/releases)下载 Windows ZIP，完整解压到可写入的文件夹。
-2. 双击 `MoreThanDone.exe`。桌面窗口依赖 Microsoft Edge WebView2。打开打包后的应用不需要另装 Python；执行 Python 学习任务仍需要可用的 Python 解释器。
+2. 双击 `MoreThanDone.exe`。程序会自动检测 Microsoft Edge WebView2；缺少时询问是否安装，确认后联网下载、验证微软数字签名并显示安装进度，成功后继续打开软件。已有组件时直接启动。打开打包后的应用不需要另装 Python；执行 Python 学习任务仍需要可用的 Python 解释器。
 3. 在“设置与权限”中填写自己的 API Key、模型和服务地址。代码默认使用 DeepSeek API 和 `deepseek-flash` 模型；工作区工具需要模型支持工具调用。
 4. 创建项目并选择工作区文件夹。首次启动显示“暂无项目”。
 
 升级前请关闭所有正在运行的版本，再替换 EXE。把原来的 `data` 文件夹保留在新 EXE 同目录即可沿用设置和对话。向别人分享程序时不要带上自己的 `data` 文件夹。
+
+首次补装需要联网，当前 ZIP 不包含完整离线运行时。自动安装失败时会提供[微软官方下载页](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)，可手动安装 Evergreen Standalone Installer x64（也可在其他电脑下载后拷贝安装），然后重新打开软件。WebView2 是界面组件，使用软件时不需要打开 Edge 浏览器。
+
+## 归档保存在哪里
+
+项目/对话归档仍保存在 EXE 同目录的 `data/conversations.json`，只标记归档，不移动、压缩或复制工作区文件夹；原文件夹仍在你选择的位置。点击侧栏“已归档”可查看并恢复。源码运行时位于源码目录的 `data/conversations.json`；用 `--data-dir` 启动时位于指定目录。归档不等于备份，备份时请同时保存 `data` 和工作区文件。`data` 可能含密钥和私人对话，不能随发行包分享。
 
 ## 从源码运行
 
@@ -72,7 +78,7 @@ Node.js 只用于 JavaScript 语法检查。原生布局验收依赖 Edge WebVie
 构建 Windows EXE 并整理便携发行包：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.4-windows-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.5-windows-x64
 .\.venv\Scripts\python.exe -m scripts.package_release
 ```
 

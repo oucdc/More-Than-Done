@@ -12,6 +12,7 @@ import webview
 from agent.llm_client import LLMClient
 from agent.agent_config import AgentConfigStore
 from agent.conversations import ConversationStore
+from agent.desktop_runtime import ensure_webview2
 from agent.tutor_agent import TutorAgent
 from config import APP_VERSION, DEFAULT_BASE_URL, DEFAULT_MODEL, Settings
 from web_ui import MoreThanDoneHTTPServer
@@ -67,6 +68,9 @@ def main() -> int:
     if args.debug_log:
         args.debug_log.parent.mkdir(parents=True, exist_ok=True)
         sys.stderr = args.debug_log.open("a", encoding="utf-8", buffering=1)
+
+    if not ensure_webview2():
+        return 1
 
     data_root = args.data_dir.resolve() if args.data_dir else None
     server = MoreThanDoneHTTPServer(
