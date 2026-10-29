@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f3ef">
+    <link rel="icon" href="data:,">
+    <title>More Than Done · Agent 工作台</title>
+    <link rel="stylesheet" href="/agent-assets/agent.css">
+    <script src="/agent-assets/agent.js" defer></script>
+  </head>
+  <body>
+    <header class="agent-header">
+      <a class="back-link" href="/">← 返回教学</a>
+      <div class="agent-brand">
+        <div class="agent-mark" aria-hidden="true">M</div>
+        <div>
+          <strong>Agent 工作台</strong>
+          <span>LOCAL WORKSPACE AGENT</span>
+        </div>
+      </div>
+      <div class="agent-status" id="agent-status">正在读取配置…</div>
+    </header>
+
+    <main class="agent-layout">
+      <aside class="settings-panel">
+        <div class="panel-heading">
+          <h1>运行设置</h1>
+          <span class="panel-hint">API、工作区与权限都由你决定</span>
+        </div>
+
+        <form id="config-form" class="settings-form">
+          <label class="field">
+            <span>DeepSeek API Key</span>
+            <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="已配置时留空">
+          </label>
+          <label class="field">
+            <span>Base URL</span>
+            <input id="base-url" type="text" spellcheck="false">
+          </label>
+          <label class="field">
+            <span>模型</span>
+            <input id="model" type="text" spellcheck="false">
+          </label>
+          <label class="field">
+            <span>工作区绝对路径</span>
+            <input id="workspace" type="text" spellcheck="false" placeholder="例如 C:\Projects\my-project">
+          </label>
+
+          <fieldset class="permissions">
+            <legend>授予权限</legend>
+            <label><input id="allow-read" type="checkbox"> 读取工作区文件</label>
+            <label><input id="allow-write" type="checkbox"> 写入工作区文件</label>
+            <label><input id="allow-shell" type="checkbox"> 执行命令</label>
+            <label class="confirm-row"><input id="confirm-write" type="checkbox"> 写入前每次确认</label>
+            <label class="confirm-row"><input id="confirm-shell" type="checkbox"> 命令前每次确认</label>
+          </fieldset>
+
+          <label class="clear-row"><input id="clear-key" type="checkbox"> 清除已保存的 API Key</label>
+          <button class="primary-button" id="save-config" type="submit">保存设置</button>
+        </form>
+
+        <div class="config-note" id="config-note"></div>
+        <div class="security-note">
+          Key 只保存在本机 <code>data/agent_config.json</code>，不会提交 Git。
+          命令和工作区写入默认每次确认；拒绝后 Agent 会得到拒绝结果。
+        </div>
+      </aside>
+
+      <section class="agent-panel">
+        <div class="chat-heading">
+          <div>
+            <h2>工作区对话</h2>
+            <p id="workspace-label">尚未选择工作区</p>
+          </div>
+          <div class="chat-actions">
+            <button class="ghost-button" id="new-conversation" type="button">新对话</button>
+            <button class="ghost-button danger" id="cancel" type="button" disabled>取消</button>
+          </div>
+        </div>
+
+        <div class="messages" id="messages" role="log" aria-live="polite"></div>
+
+        <div class="approval" id="approval" hidden>
+          <div class="approval-title">需要你的批准</div>
+          <div class="approval-tool" id="approval-tool"></div>
+          <pre class="approval-args" id="approval-args"></pre>
+          <div class="approval-actions">
+            <button class="primary-button" id="approve" type="button">允许本次操作</button>
+            <button class="ghost-button danger" id="reject" type="button">拒绝</button>
+          </div>
+        </div>
+
+        <form class="composer" id="chat-form">
+          <textarea id="message" rows="3" maxlength="20000" placeholder="告诉 Agent 要做什么，例如：读取 11.pdf 并总结目录结构" disabled></textarea>
+          <div class="composer-actions">
+            <span class="composer-hint">Enter 发送 · Shift+Enter 换行</span>
+            <button class="primary-button" id="send" type="submit" disabled>发送</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <div class="toast-region" id="toast-region"></div>
+  </body>
+</html>

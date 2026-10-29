@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#171816">
+    <link rel="icon" href="data:,">
+    <title>More Than Done · 学习工作台</title>
+    <link rel="stylesheet" href="/workspace-assets/workspace.css">
+    <script src="/vendor/marked.js" defer></script>
+    <script src="/vendor/purify.min.js" defer></script>
+    <script src="/workspace-assets/workspace.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">M</div>
+          <div class="brand-copy">
+            <strong>More Than Done</strong>
+            <span>LEARNING WORKSPACE</span>
+          </div>
+        </div>
+
+        <button class="new-chat" id="new-chat" type="button">
+          <span class="plus" aria-hidden="true">＋</span>
+          <span>新学习对话</span>
+          <kbd>Ctrl K</kbd>
+        </button>
+
+        <div class="sidebar-scroll">
+          <section class="side-section">
+            <div class="side-heading">
+              <span>项目</span>
+              <button class="icon-button" id="add-project" type="button" title="新建项目" aria-label="新建项目">＋</button>
+            </div>
+            <div class="project-list" id="project-list"></div>
+          </section>
+
+        </div>
+
+        <div class="sidebar-footer">
+          <button class="settings-button" id="open-archived" type="button"><span aria-hidden="true">▣</span><span>已归档</span><span id="archived-count"></span></button>
+          <button class="settings-button" id="open-settings" type="button">
+            <span aria-hidden="true">⚙</span>
+            <span>设置与权限</span>
+          </button>
+          <div class="api-status" id="api-status">正在读取配置…</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <button class="panel-toggle sidebar-toggle" id="toggle-sidebar" type="button" aria-label="展开项目列表" aria-expanded="false">☰</button>
+          <div class="project-context">
+            <div class="project-line">
+              <span class="project-dot" aria-hidden="true"></span>
+              <strong id="project-name">项目</strong>
+              <span class="project-badge" id="conversation-time"></span>
+            </div>
+            <div class="project-path" id="project-path"></div>
+          </div>
+
+          <div class="topbar-actions">
+            <button class="panel-toggle lesson-toggle" id="toggle-lesson" type="button" aria-expanded="false">学习导航</button>
+            <label class="control">
+              <span>模型</span>
+              <select id="model-select" aria-label="选择模型"></select>
+            </label>
+            <label class="control reasoning-control">
+              <span>回复深度</span>
+              <select id="reasoning-select" aria-label="回复深度" title="控制回复预算与讲解深度"></select>
+            </label>
+            <span class="run-status idle" id="run-status">空闲</span>
+            <span class="connection-status connecting" id="connection-status" role="status" aria-live="polite">连接中</span>
+          </div>
+        </header>
+
+        <div class="learning-layout">
+        <div class="dialogue-column">
+        <div class="chat-viewport" id="chat-viewport">
+          <div class="chat" id="chat">
+            <section class="welcome empty-project-state" id="empty-project-state" aria-labelledby="empty-project-heading" hidden>
+              <div class="welcome-mark" aria-hidden="true">▱</div>
+              <div class="welcome-eyebrow">YOUR LEARNING WORKSPACE</div>
+              <h1 id="empty-project-heading">暂无项目</h1>
+              <p>先选择一个文件夹作为工作区，再开始学习对话。你也可以从左下角恢复已归档的项目。</p>
+              <button class="button primary empty-project-create" id="create-first-project" type="button">创建项目</button>
+            </section>
+            <div class="welcome" id="welcome">
+              <div class="welcome-mark" aria-hidden="true">◈</div>
+              <div class="welcome-eyebrow">DON'T JUST FINISH. LEARN TO DO IT YOURSELF.</div>
+              <h1>从想学会，到自己会做。</h1>
+              <p>说说你的目标。我们把它拆成小步骤：先理解，动手试，得到反馈，再独立完成。</p>
+              <div class="welcome-chips">
+                <button type="button" data-prompt="我想学会读懂这个项目。请先了解我的基础，带我逐步阅读并亲手修改一个小功能。">带我读懂项目</button>
+                <button type="button" data-prompt="我想学会自己定位错误。请从工作区中的一个具体问题开始，引导我观察、提出假设并验证，不要直接替我修好。">教我排查问题</button>
+                <button type="button" data-prompt="我想学一个新技能，请先问我想达到的目标和已有基础，再安排一个能在本机动手的小任务。">开始一项新学习</button>
+              </div>
+            </div>
+            <div class="messages" id="messages" role="log" aria-live="polite"></div>
+
+            <div class="approval" id="approval" hidden>
+              <div class="approval-head">
+                <span class="approval-kicker">ACTION REQUIRED</span>
+                <strong>需要你的批准</strong>
+              </div>
+              <div class="approval-tool" id="approval-tool"></div>
+              <div class="approval-context" id="approval-context"></div>
+              <pre class="approval-args" id="approval-args"></pre>
+              <p class="approval-reason" id="approval-reason"></p>
+              <details class="approval-details"><summary>查看完整参数</summary><pre id="approval-raw"></pre></details>
+              <div class="approval-actions">
+                <button class="button approve" id="approve" type="button">批准一次</button>
+                <button class="button ghost danger" id="reject" type="button">拒绝</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="jump-latest-wrap"><button class="jump-latest" id="jump-latest" type="button" hidden>有新内容 · 回到底部 ↓</button></div>
+          <form class="composer" id="chat-form">
+            <textarea id="message" rows="3" maxlength="20000" aria-label="学习目标、问题或你的尝试" placeholder="你想学会什么？也可以写下你的思路、操作结果或卡住的地方…"></textarea>
+            <div class="composer-bottom">
+              <div class="composer-hints">
+                <div class="permission-control">
+                  <button class="permissions-button" id="permissions-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="permission-menu">
+                    <span aria-hidden="true">◈</span><span id="permission-summary">请求批准</span><span aria-hidden="true">⌄</span>
+                  </button>
+                  <div class="permission-menu" id="permission-menu" role="menu" aria-label="操作批准方式" hidden>
+                    <div class="permission-menu-heading">应如何批准导师操作？</div>
+                    <button type="button" role="menuitemradio" aria-checked="false" data-permission-mode="request"><span class="permission-icon" aria-hidden="true">☝</span><span class="permission-copy"><strong>请求批准</strong><span>写文件、执行命令前始终询问</span></span><span class="permission-check" aria-hidden="true">✓</span></button>
+                    <button type="button" role="menuitemradio" aria-checked="false" data-permission-mode="auto"><span class="permission-icon" aria-hidden="true">◈</span><span class="permission-copy"><strong>帮我批准</strong><span>自动通过工作区内常规操作，其他操作先问</span></span><span class="permission-check" aria-hidden="true">✓</span></button>
+                    <button type="button" role="menuitemradio" aria-checked="false" data-permission-mode="full"><span class="permission-icon" aria-hidden="true">⛨</span><span class="permission-copy"><strong>完全访问权限</strong><span>可访问工作区外文件、执行命令和联网，不逐项询问</span></span><span class="permission-check" aria-hidden="true">✓</span></button>
+                    <div class="permission-menu-note" id="permission-menu-note">命令按当前 Windows 用户权限运行。</div>
+                  </div>
+                </div>
+                <span>Enter 发送 · Shift+Enter 换行</span>
+                <button class="cancel-button" id="cancel" type="button" disabled>停止</button>
+              </div>
+              <div class="send-actions">
+                <button class="attempt-button" id="submit-attempt" type="button" hidden>提交我的尝试</button>
+                <button class="send-button" id="send" type="submit">提问 <span aria-hidden="true">↵</span></button>
+              </div>
+            </div>
+          </form>
+          <div class="disclaimer" id="composer-note">按你的节奏学习 · 演示和独立完成分别记录 · 本机文件访问由你授权</div>
+        </div>
+        </div>
+
+        <aside class="lesson-panel" aria-label="学习导航">
+          <header class="lesson-heading"><span class="eyebrow">YOUR NEXT SMALL STEP</span><h2>学习导航</h2><span class="lesson-mode" id="lesson-mode">按你的节奏</span></header>
+          <div class="lesson-empty" id="lesson-empty"><strong>先定一个小目标</strong><p>导师会把目标变成可尝试的步骤。你可以随时要提示、看一次演示，或自己来。</p><p class="muted-note">独立完成需要你自己的尝试和审阅证据。</p></div>
+          <div id="lesson-content" hidden>
+            <div class="lesson-goal" id="lesson-goal"></div>
+            <div class="lesson-progress"><span id="lesson-progress-text"></span><progress id="lesson-progress" value="0" max="1"></progress></div>
+            <ol class="lesson-steps" id="lesson-steps"></ol>
+            <section class="current-step" id="current-step">
+              <span class="card-kicker" id="step-position">现在只做这一小步</span><h3 id="step-title"></h3>
+              <div id="step-task" class="markdown-body"></div>
+              <div class="criteria"><strong>怎样算完成</strong><p id="step-criteria"></p></div>
+              <div class="help-buttons">
+                <button type="button" data-learning-action="hint">给我提示</button>
+                <button type="button" data-learning-action="explain">解释一下</button>
+                <button type="button" data-learning-action="demonstrate">演示这一步</button>
+                <button type="button" data-learning-action="independent">让我自己试</button>
+              </div>
+              <div class="assistance-note" id="assistance-note"></div>
+              <p class="step-transition-note" id="step-transition-note" role="status"></p>
+              <div class="step-actions"><button class="button primary" id="review-pending-attempt" type="button" hidden>请导师审阅这次尝试</button><button class="button primary" id="next-step" type="button" data-learning-action="next">继续下一步</button><button class="skip-button" type="button" data-learning-action="skip">跳过（不计掌握）</button></div>
+            </section>
+            <section class="learning-feedback" id="learning-feedback" hidden></section>
+            <section class="lesson-summary" id="lesson-summary"></section>
+          </div>
+          <footer class="lesson-footnote">导师审阅会有误差；不会把听过讲解或看过演示直接记成独立掌握。</footer>
+        </aside>
+        </div>
+      </main>
+    </div>
+
+    <dialog class="dialog" id="settings-dialog">
+      <form method="dialog" class="dialog-card" id="settings-form">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">CONFIGURATION</span>
+            <h2>设置与权限</h2>
+          </div>
+          <button class="dialog-close" value="cancel" type="submit" aria-label="关闭">×</button>
+        </div>
+
+        <div class="settings-grid">
+          <label class="field span-2">
+            <span>DeepSeek API Key</span>
+            <input id="settings-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="已配置时留空保持不变">
+          </label>
+          <label class="field span-2">
+            <span>Base URL</span>
+            <input id="settings-base-url" type="text" spellcheck="false">
+          </label>
+        </div>
+
+        <div class="dialog-subhead">
+          <span>当前工作区</span>
+          <span class="muted" id="settings-workspace"></span>
+        </div>
+        <p class="settings-permission-summary" id="settings-permission-summary"></p>
+        <section class="environment-summary" aria-label="命令运行环境">
+          <h3>命令运行环境</h3>
+          <dl><dt>命令行</dt><dd id="environment-shell">读取中…</dd><dt>Python</dt><dd id="environment-python">读取中…</dd></dl>
+          <p id="environment-note">这里显示的是本程序实际使用的运行环境。</p>
+        </section>
+        <label class="clear-key-option"><input id="setting-clear-key" type="checkbox"> 清除已保存的 API Key</label>
+
+        <div class="dialog-note" id="settings-note">Key 只保存在本机 <code>data/agent_config.json</code>，不会提交 Git。</div>
+        <div class="dialog-actions">
+          <button class="button ghost" value="cancel" type="submit">取消</button>
+          <button class="button primary" id="save-settings" type="button">保存设置</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="project-dialog">
+      <form method="dialog" class="dialog-card project-dialog-card" id="project-form">
+        <div class="dialog-heading">
+          <div>
+            <span class="eyebrow">NEW PROJECT</span>
+            <h2>新建项目</h2>
+          </div>
+          <button class="dialog-close" value="cancel" type="submit" aria-label="关闭">×</button>
+        </div>
+        <label class="field">
+          <span>项目名称</span>
+          <input id="project-name-input" type="text" placeholder="选择文件夹后自动填写，也可修改">
+        </label>
+        <div class="field">
+          <label for="project-workspace-input">工作区文件夹</label>
+          <div class="folder-picker-row">
+            <input id="project-workspace-input" type="text" spellcheck="false" placeholder="选择文件夹，或粘贴完整路径">
+            <button class="button" id="choose-workspace" type="button">选择文件夹…</button>
+          </div>
+        </div>
+        <div class="dialog-note">项目的文件读写与命令都以这个目录为根。</div>
+        <div class="dialog-actions">
+          <button class="button ghost" value="cancel" type="submit">取消</button>
+          <button class="button primary" id="create-project" type="button">创建项目</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="conversation-context-menu" id="project-context-menu" role="menu" aria-label="项目操作" hidden>
+      <button type="button" role="menuitem" id="rename-project-menu"><span aria-hidden="true">✎</span> 重命名</button>
+      <button type="button" role="menuitem" id="pin-project-menu"><span aria-hidden="true">⌖</span> <span id="pin-project-label">置顶</span></button>
+      <button type="button" role="menuitem" id="archive-project-menu"><span aria-hidden="true">▣</span> 归档</button>
+      <button type="button" role="menuitem" id="delete-project-menu"><span aria-hidden="true">⌫</span> 删除项目</button>
+    </div>
+    <dialog class="dialog" id="rename-project-dialog" aria-labelledby="rename-project-heading">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-heading"><h2 id="rename-project-heading">重命名项目</h2><button class="dialog-close" value="cancel" type="submit" aria-label="关闭">×</button></div>
+        <label class="field"><span>项目名称</span><input id="rename-project-input" maxlength="120" autocomplete="off"></label>
+        <div class="dialog-actions"><button class="button ghost" value="cancel" type="submit">取消</button><button class="button primary" id="confirm-rename-project" type="button">保存</button></div>
+      </form>
+    </dialog>
+    <dialog class="dialog" id="delete-project-dialog" aria-labelledby="delete-project-heading">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-heading"><h2 id="delete-project-heading">删除这个项目？</h2><button class="dialog-close" value="cancel" type="submit" aria-label="关闭">×</button></div>
+        <p class="delete-conversation-name" id="delete-project-name"></p>
+        <p class="delete-conversation-note" id="delete-project-note"></p>
+        <div class="dialog-actions"><button class="button ghost" value="cancel" type="submit">取消</button><button class="button destructive" id="confirm-delete-project" type="button">删除项目</button></div>
+      </form>
+    </dialog>
+
+    <div class="conversation-context-menu" id="conversation-context-menu" role="menu" aria-label="对话操作" hidden>
+      <button type="button" role="menuitem" id="rename-conversation-menu"><span aria-hidden="true">✎</span> 重命名</button>
+      <button type="button" role="menuitem" id="pin-conversation-menu"><span aria-hidden="true">⌖</span> <span id="pin-conversation-label">置顶</span></button>
+      <button type="button" role="menuitem" id="archive-conversation-menu"><span aria-hidden="true">▣</span> 归档</button>
+      <button type="button" role="menuitem" id="move-conversation-menu"><span aria-hidden="true">▱</span> 移至项目</button>
+      <button type="button" role="menuitem" id="delete-conversation-menu"><span aria-hidden="true">⌫</span> 删除对话</button>
+    </div>
+
+    <dialog class="dialog" id="rename-conversation-dialog" aria-labelledby="rename-conversation-heading">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-heading"><h2 id="rename-conversation-heading">重命名对话</h2><button class="dialog-close" value="cancel" type="submit" aria-label="关闭">×</button></div>
+        <label class="field"><span>对话名称</span><input id="rename-conversation-input" maxlength="80" required></label>
+        <div class="dialog-actions"><button class="button ghost" value="cancel" type="submit">取消</button><button class="button primary" id="confirm-rename-conversation" type="button">保存</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="move-conversation-dialog" aria-labelledby="move-conversation-heading">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-heading"><h2 id="move-conversation-heading">移至项目</h2><button class="dialog-close" value="cancel" type="submit" aria-label="关闭">×</button></div>
+        <p class="dialog-note">选择目标项目。移动当前对话后，工作区会切换到该项目。</p>
+        <label class="field"><span>目标项目</span><select id="move-conversation-select"></select></label>
+        <div class="dialog-actions"><button class="button ghost" value="cancel" type="submit">取消</button><button class="button primary" id="confirm-move-conversation" type="button">移动对话</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="archived-conversations-dialog" aria-labelledby="archived-conversations-heading">
+      <div class="dialog-card">
+        <div class="dialog-heading"><div><h2 id="archived-conversations-heading">已归档</h2><p class="dialog-note">恢复项目或对话后，会重新出现在侧栏。</p></div><button class="dialog-close" id="close-archived" type="button" aria-label="关闭">×</button></div>
+        <div class="archived-conversations-list" id="archived-conversations-list"></div>
+      </div>
+    </dialog>
+
+    <dialog class="dialog" id="delete-conversation-dialog" aria-labelledby="delete-conversation-heading">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-heading"><h2 id="delete-conversation-heading">删除这段对话？</h2><button class="dialog-close" value="cancel" type="submit" aria-label="关闭">×</button></div>
+        <p class="delete-conversation-name" id="delete-conversation-name"></p>
+        <p class="delete-conversation-note">将删除这段对话的消息和学习记录，删除后无法恢复。工作区文件会保留。</p>
+        <div class="dialog-actions"><button class="button ghost" value="cancel" type="submit">取消</button><button class="button destructive" id="confirm-delete-conversation" type="button">删除对话</button></div>
+      </form>
+    </dialog>
+
+    <div class="toast-stack" id="toast-stack"></div>
+  </body>
+</html>

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f3ef">
+    <link rel="icon" href="data:,">
+    <title>More Than Done · 学习工作台</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="学习导航">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div>
+            <div class="brand-name">More Than Done</div>
+            <div class="brand-caption">LEARNING STUDIO</div>
+          </div>
+        </div>
+
+        <button class="new-session-button" id="primary-action" type="button">
+          <span class="plus-icon" aria-hidden="true">＋</span>
+          <span id="primary-action-label">开始学习</span>
+          <span class="shortcut">↵</span>
+        </button>
+
+        <section class="sidebar-section current-section">
+          <div class="section-title">当前学习 <span class="live-dot" aria-hidden="true"></span></div>
+          <div class="current-card">
+            <div class="current-card-icon" aria-hidden="true">✳</div>
+            <div class="current-card-copy">
+              <strong id="sidebar-goal">正在准备学习</strong>
+              <span id="sidebar-stage">目标确认</span>
+            </div>
+            <span class="current-chevron" aria-hidden="true">›</span>
+          </div>
+          <div class="sidebar-progress"><span id="sidebar-progress-fill"></span></div>
+        </section>
+
+        <section class="sidebar-section path-section">
+          <div class="section-title">学习路径 <span class="section-count">01 — 07</span></div>
+          <nav class="stage-list" id="stage-list" aria-label="学习阶段"></nav>
+        </section>
+
+        <section class="sidebar-section archive-section">
+          <div class="section-title archive-title">
+            <span>历史会话</span>
+            <button class="icon-button" id="refresh-archives" type="button" title="刷新归档" aria-label="刷新归档">↻</button>
+          </div>
+          <div class="archive-list" id="archive-list">
+            <div class="archive-empty">暂无归档</div>
+          </div>
+        </section>
+
+        <div class="sidebar-footer">
+          <div class="connection-indicator"><span class="connection-dot"></span><span>本机服务已连接</span></div>
+          <div class="privacy-note"><span aria-hidden="true">⌂</span> 学习记录保存在此设备</div>
+          <a class="agent-link" href="/agent">Agent 工作台 <span aria-hidden="true">→</span></a>
+          <button class="quit-app-button" id="quit-app" type="button">退出图形界面</button>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div class="breadcrumbs">
+            <span class="crumb-home" aria-hidden="true">◈</span>
+            <span>学习工作台</span>
+            <span class="crumb-separator">/</span>
+            <strong id="breadcrumb-stage">目标确认</strong>
+          </div>
+          <div class="topbar-actions">
+            <div class="autosave-label"><span class="save-check">✓</span> 自动保存</div>
+            <button class="quit-app-top" id="quit-app-top" type="button">退出</button>
+            <div class="profile-button" title="本地学习者" aria-label="本地学习者">学</div>
+          </div>
+        </header>
+
+        <div class="workspace-grid">
+          <section class="conversation-panel" aria-label="学习对话">
+            <div class="conversation-heading">
+              <div>
+                <div class="eyebrow"><span class="heading-sparkle">✳</span> YOUR LEARNING SESSION</div>
+                <h1 id="conversation-title">从一个目标开始</h1>
+                <p id="conversation-subtitle">把你想学会的内容告诉我，我们一起一步步练习。</p>
+              </div>
+              <div class="stage-pill"><span class="stage-pill-dot"></span><span id="stage-pill-label">目标确认</span></div>
+            </div>
+
+            <div class="chat-scroll" id="chat-scroll">
+              <div class="welcome-card" id="welcome-card">
+                <div class="welcome-orb" aria-hidden="true"><span>✳</span></div>
+                <div class="welcome-copy">
+                  <span class="welcome-kicker">LEARN BY DOING</span>
+                  <h2>今天想学会什么？</h2>
+                  <p>从一个具体目标开始。你可以随时提问、要提示，或选择自己尝试。</p>
+                </div>
+                <div class="welcome-suggestions" id="welcome-suggestions">
+                  <button type="button" data-suggestion="我想学会解一元一次方程">解一元一次方程 <span>↗</span></button>
+                  <button type="button" data-suggestion="我想理解分数的加法">理解分数加法 <span>↗</span></button>
+                </div>
+              </div>
+              <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
+              <div class="thinking-indicator" id="thinking-indicator" hidden>
+                <span class="thinking-dots"><i></i><i></i><i></i></span>
+                <span>正在整理下一步…</span>
+              </div>
+            </div>
+
+            <div class="composer-area">
+              <div class="quick-actions" id="quick-actions" aria-label="快捷命令">
+                <button type="button" data-command="提示"><span>✧</span> 提示</button>
+                <button type="button" data-command="讲解"><span>▤</span> 讲解</button>
+                <button type="button" data-command="答案"><span>◉</span> 看答案</button>
+                <button type="button" data-command="独立练习"><span>↗</span> 独立练习</button>
+                <button type="button" data-command="检验"><span>◎</span> 掌握度检验</button>
+                <button type="button" data-command="总结"><span>▧</span> 总结</button>
+              </div>
+              <form class="composer" id="composer-form">
+                <textarea id="message-input" rows="1" maxlength="20000" placeholder="输入你的学习目标或回答…" aria-label="输入学习目标或回答" disabled></textarea>
+                <div class="composer-bottom">
+                  <div class="composer-hint"><span class="hint-key">↵</span> 发送 <span class="hint-divider">·</span> Shift + ↵ 换行</div>
+                  <button class="send-button" id="send-button" type="submit" disabled aria-label="发送">
+                    <span>发送</span><span class="send-arrow" aria-hidden="true">↑</span>
+                  </button>
+                </div>
+              </form>
+              <div class="new-session-confirm" id="new-session-confirm" hidden>
+                <span>上一轮已结束</span>
+                <button type="button" id="confirm-new-session">开始新会话 <span>→</span></button>
+                <button type="button" id="return-session">返回</button>
+              </div>
+              <div class="composer-footnote"><span class="footnote-lock">⌑</span> AI 可能会出错；掌握度由学习证据判定，请结合自己的理解。</div>
+            </div>
+          </section>
+
+          <aside class="insights-panel" aria-label="学习概览">
+            <div class="insights-header">
+              <div><span class="eyebrow">SESSION OVERVIEW</span><h2>本轮概览</h2></div>
+              <button class="icon-button" id="refresh-state" type="button" title="刷新状态" aria-label="刷新状态">↻</button>
+            </div>
+
+            <section class="overview-card goal-card">
+              <div class="card-label"><span class="label-icon goal-icon">◎</span> 学习目标</div>
+              <p id="overview-goal">确认目标后，这里会显示本轮学习方向。</p>
+            </section>
+
+            <section class="overview-card">
+              <div class="card-label"><span class="label-icon level-icon">⌁</span> 当前进度</div>
+              <div class="progress-status" id="progress-status">尚未接触</div>
+              <div class="progress-meter"><span id="overview-progress-fill"></span></div>
+              <div class="progress-meta"><span id="overview-stage">目标确认</span><span id="overview-percent">0%</span></div>
+            </section>
+
+            <section class="overview-card learner-card">
+              <div class="card-label"><span class="label-icon level-icon">↗</span> 学习起点</div>
+              <p id="learner-level">完成基础诊断后，会显示当前学习起点。</p>
+            </section>
+
+            <section class="stats-grid">
+              <div class="stat-card"><span class="stat-label">练习记录</span><strong id="attempt-count">0</strong><span class="stat-unit">次尝试</span></div>
+              <div class="stat-card"><span class="stat-label">提示等级</span><strong id="hint-level">L0</strong><span class="stat-unit">当前题目</span></div>
+            </section>
+
+            <section class="mastery-card" id="mastery-card">
+              <div class="mastery-icon" aria-hidden="true">✦</div>
+              <div><strong id="mastery-title">掌握度待验证</strong><p id="mastery-description">完成独立练习后，可以进行掌握度检验。</p></div>
+            </section>
+
+            <section class="exercise-card" id="exercise-card" hidden>
+              <div class="card-label"><span class="label-icon exercise-icon">▱</span> 当前练习</div>
+              <p id="active-exercise"></p>
+            </section>
+
+            <div class="privacy-card"><span aria-hidden="true">⌂</span><p>你的作答原文不会写入学习记录。学习进度保存在本机。</p></div>
+          </aside>
+        </div>
+      </main>
+    </div>
+    <div class="toast-region" id="toast-region" aria-live="polite"></div>
+  </body>
+</html>

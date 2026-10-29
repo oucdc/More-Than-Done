@@ -1,0 +1,27 @@
+# Local credentials and environment overrides
+.env
+.env*
+!.env.example
+*.key
+*.p12
+*.pfx
+
+# Runtime data and private working notes
+/data/**
+!/data/.gitkeep
+/HANDOFF.md
+/verification/
+/*prompt.md
+/DEEPSEEK-修复说明.md
+
+# Local environments, caches and build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.exe
+*.log
