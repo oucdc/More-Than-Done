@@ -89,3 +89,43 @@ def test_switching_conversations_keeps_learning_evidence_separate(tmp_path):
     assert new["lesson"]["steps"] == []
     restored = workspace.select_conversation(first)
     assert restored["lesson"]["current_step"]["answer_viewed"]
+
+
+def test_retry_action_generates_new_pair_then_can_verify_mastery(tmp_path):
+    workspace, store = manager(tmp_path)
+    lesson = workspace.session.lesson
+    def task(kind, name):
+        return {"kind": kind, "title": name, "task": name, "success_criteria": "解释依据"}
+    lesson.plan({"goal": "重练", "steps": [task("independent", "旧独立题"), task("transfer", "旧迁移题")]})
+    def assess(correctness):
+        lesson.review({"submission_id": lesson.context()["submission"]["id"], "correctness": correctness, "reasoning_quality": "sound", "evidence": "真实尝试", "feedback": "审阅意见"})
+    lesson.submit("独立答案")
+    assess("correct")
+    lesson.action("next")
+    lesson.submit("迁移答案")
+    assess("incorrect")
+    workspace.snapshot()
+
+    class RecoveryTeacher(TeachingClient):
+        def complete_tool_call(self, messages, **kwargs):
+            context = json.loads(messages[1]["content"].split("\n", 1)[1])
+            if context["retry_requested"]:
+                return reply(tool="plan_learning", arguments={"goal": "重练", "append": True, "steps": [task("independent", "新独立题"), task("transfer", "新迁移题")]})
+            return super().complete_tool_call(messages, **kwargs)
+
+    workspace.session.client_factory = lambda _: RecoveryTeacher()
+    workspace.teaching_action("retry")
+    finish(workspace.session)
+    assert workspace.snapshot()["lesson"]["current_step"]["task"] == "新独立题"
+    workspace.submit_attempt("新题的独立答案和依据")
+    finish(workspace.session)
+    workspace.teaching_action("next")
+    finish(workspace.session)
+    workspace.submit_attempt("新迁移场景中的独立答案和依据")
+    finish(workspace.session)
+    state = workspace.snapshot()
+    assert state["lesson"]["mastery_verified"] and state["lesson"]["can_continue"]
+    restored = WorkspaceManager(workspace.config_store, store, AgentSession(workspace.config_store)).snapshot()
+    assert restored["lesson"]["mastery_verified"]
+    assert len(restored["lesson"]["attempts"]) == 4
+    assert restored["lesson"]["steps"][1]["status"] == "skipped"

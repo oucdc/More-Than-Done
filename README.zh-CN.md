@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**0.1.5 版 · Windows 桌面学习工作台**
+**0.1.6 版 · Windows 桌面学习工作台**
 
 More Than Done 是一款教育 AI Agent，帮助你理解任务、亲手尝试、获得反馈，并逐步独立完成。它把本地项目、流式聊天和由程序记录进度的学习计划放在同一个工作台中。
 
@@ -12,6 +12,7 @@ More Than Done 是一款教育 AI Agent，帮助你理解任务、亲手尝试�
 - 对话支持重命名、置顶、归档恢复、移动和删除；项目也有右键管理菜单。删除项目会删除其中的对话记录，工作区文件会保留。
 - 模型流式回复，工具卡片显示退出码、超时、原因和命令输出。
 - 按小步骤学习，提交自己的尝试、请求分级帮助，并在审阅后继续。获得帮助和独立完成分别记录。
+- 项目文件夹移动后，可在项目右键菜单中“重新选择文件夹”，聊天和学习记录会保留。迁移检验未通过时，可点击“重新练习并检验”，完成新的独立练习和迁移题。
 - 长代码、宽表格和长消息在各自框内滚动，不会撑宽整个界面。
 - 选择文件修改与命令操作的批准方式，在设置中查看实际命令行和 Python 路径。
 - 设置、项目、对话和学习记录保存在本机。
@@ -78,7 +79,7 @@ Node.js 只用于 JavaScript 语法检查。原生布局验收依赖 Edge WebVie
 构建 Windows EXE 并整理便携发行包：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.5-windows-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.6-windows-x64
 .\.venv\Scripts\python.exe -m scripts.package_release
 ```
 

@@ -68,7 +68,11 @@ class GuidanceNotebook:
         submission = state.get("submission")
         if submission is not None and (not isinstance(submission, dict) or not all(isinstance(submission.get(k), str) for k in ("id", "step_id", "text"))):
             raise ValueError("待审阅作答格式无效。")
+        if type(state.get("retry_requested", False)) is not bool:
+            raise ValueError("重新练习标记无效。")
         self.state = deepcopy(state)
+        self.state.setdefault("submission", None)
+        self.state.setdefault("retry_requested", False)
 
     @property
     def current(self):
@@ -92,8 +96,28 @@ class GuidanceNotebook:
         for index, raw in enumerate(raw_steps):
             if not isinstance(raw, dict) or raw.get("kind") not in KINDS: raise ValueError("教学步骤类型无效。")
             steps.append({"id": f"step-{existing+index+1}", "title": text(raw.get("title"), "步骤标题", 100), "task": text(raw.get("task"), "本步任务"), "success_criteria": text(raw.get("success_criteria"), "完成标准"), "kind": raw["kind"], "status": "pending", "hint_level": 0, "answer_viewed": False})
+        recovering = self.state.get("retry_requested", False)
+        if recovering:
+            if not self.public()["can_retry"]:
+                raise ValueError("当前检验状态已改变，请先审阅当前作答。")
+            if [step["kind"] for step in steps] != ["independent", "transfer"]:
+                raise ValueError("重新检验需要一道新的独立练习和一道新的迁移题。")
+            normalize = lambda value: re.sub(r"\s+", "", value).casefold()
+            tasks = [normalize(step["task"]) for step in self.state["steps"] + steps]
+            old_tasks = set(tasks[:-2])
+            if tasks[-2] in old_tasks or tasks[-1] in old_tasks or tasks[-1] == tasks[-2]:
+                raise ValueError("重新练习需要新任务，不能复用原题。")
         self.state["goal"] = goal
-        self.state["steps"].extend(steps)
+        if recovering:
+            # Preserve the failed step and all later planned work; insert the new
+            # practice pair immediately after it, rather than stranding the user.
+            self.current["status"] = "skipped"
+            self.state["current"] += 1
+            self.state["steps"][self.state["current"]:self.state["current"]] = steps
+            self.state["last_feedback"] = None
+            self.state["retry_requested"] = False
+        else:
+            self.state["steps"].extend(steps)
         if self.current and self.current["kind"] in {"independent", "transfer"}:
             self.state["mode"] = "independent"
         return self.public()
@@ -113,6 +137,7 @@ class GuidanceNotebook:
         if self.state["submission"] is not None: raise ValueError("上一次尝试尚未审阅，可先请导师检查或明确跳过。")
         submission = {"id": uuid.uuid4().hex, "step_id": self.current["id"], "text": text(answer, "你的尝试", 20000), "hint_level": self.current["hint_level"], "answer_viewed": self.current["answer_viewed"]}
         self.state["submission"] = submission
+        self.state["retry_requested"] = False
         self.current["status"] = "submitted"
         return deepcopy(submission)
 
@@ -146,7 +171,13 @@ class GuidanceNotebook:
     def action(self, action):
         if self.current is None: raise ValueError("请先给导师一个学习目标并生成计划。")
         if action in {"hint", "explain", "demonstrate"}: return self.help(action)
-        if action == "independent": self.state["mode"] = "independent"
+        if action == "retry":
+            if not self.public()["can_retry"]:
+                raise ValueError("当前没有可重新安排的迁移检验。")
+            if len(self.state["steps"]) + 2 > 30:
+                raise ValueError("本轮计划已达到步骤上限，请开启新对话练习；原记录会保留。")
+            self.state["retry_requested"] = True
+        elif action == "independent": self.state["mode"] = "independent"
         elif action in {"next", "skip"}:
             step = self.current
             if action == "next" and self.state["submission"] is not None:
@@ -157,6 +188,7 @@ class GuidanceNotebook:
             self.state["current"] += 1
             self.state["submission"] = None
             self.state["last_feedback"] = None
+            self.state["retry_requested"] = False
             self.state["mode"] = "independent" if self.current and self.current["kind"] in {"independent", "transfer"} else "guided"
         else: raise ValueError("未知教学操作。")
         return self.public()
@@ -182,6 +214,8 @@ class GuidanceNotebook:
         data["completed"] = bool(data["steps"]) and self.current is None
         data["kind_labels"] = KINDS
         data["can_continue"] = bool(submission is None and self.current and (self.current["kind"] == "explain" or self.current["status"] == "reviewed"))
+        data["retry_requested"] = self.state.get("retry_requested", False)
+        data["can_retry"] = bool(submission is None and self.current and self.current["kind"] == "transfer" and self.current["status"] == "needs_revision")
         data["mastery_verified"] = any(item.get("mastery_passed") is True for item in data["attempts"])
         data["independent_successes"] = sum(PracticeAttempt.from_dict(item["practice"]).is_unassisted_independent_success for item in data["attempts"])
         return data
@@ -192,4 +226,4 @@ class GuidanceNotebook:
 
     @synchronized
     def context(self):
-        return {"current": self.state["current"], "total_steps": len(self.state["steps"]), "can_continue": self.public()["can_continue"], "goal": self.state["goal"], "mode": self.state["mode"], "current_step": deepcopy(self.current), "submission": deepcopy(self.state["submission"]), "recent_attempts": deepcopy(self.state["attempts"][-5:]), "observations": deepcopy(self.state["observations"][-5:]), "completed": bool(self.state["steps"]) and self.current is None}
+        return {"current": self.state["current"], "total_steps": len(self.state["steps"]), "can_continue": self.public()["can_continue"], "retry_requested": self.state.get("retry_requested", False), "goal": self.state["goal"], "mode": self.state["mode"], "current_step": deepcopy(self.current), "submission": deepcopy(self.state["submission"]), "recent_attempts": deepcopy(self.state["attempts"][-5:]), "observations": deepcopy(self.state["observations"][-5:]), "completed": bool(self.state["steps"]) and self.current is None}

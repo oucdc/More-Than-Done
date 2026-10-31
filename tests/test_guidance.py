@@ -85,6 +85,58 @@ def test_mastery_requires_unassisted_independent_then_new_transfer():
     assert notebook.public()["mastery_verified"]
 
 
+@pytest.mark.parametrize("mode", ["request", "auto", "full"])
+@pytest.mark.parametrize("command", ["pwd", "dir"])
+def test_read_only_command_during_review_preserves_independent_evidence(tmp_path, mode, command):
+    import json
+    from agent.agent_config import AgentConfig
+    from agent.tools import ToolRuntime
+    notebook = plan(step("independent"))
+    notebook.submit("我独立完成了文件内容和用途解释")
+    approvals = []
+    runtime = ToolRuntime(AgentConfig(tmp_path, permission_mode=mode), notebook=notebook,
+                          approval=lambda tool, args: approvals.append(tool) or True)
+    outcome = json.loads(runtime.execute("run_command", {"command": command}))
+    assert approvals == (["run_command"] if mode == "request" else [])
+    assert outcome["execution"] == "read_only_check"
+    review(notebook)
+    assert notebook.public()["independent_successes"] == 1
+    assert not notebook.public()["current_step"]["answer_viewed"]
+
+
+@pytest.mark.parametrize("help_kind", [None, "hint", "demonstrate"])
+def test_failed_transfer_recovers_via_new_tasks_without_erasing_evidence(help_kind):
+    notebook = plan(step("independent", "旧独立题"), step("transfer", "旧迁移题"), step("explain", "后续概念"))
+    notebook.submit("第一题答案")
+    review(notebook)
+    notebook.action("next")
+    if help_kind:
+        notebook.help(help_kind)
+    notebook.submit("迁移题第一次尝试")
+    review(notebook, correctness="incorrect")
+    notebook.action("retry")
+    notebook = GuidanceNotebook(notebook.export())
+    before = notebook.export()
+    with pytest.raises(ValueError, match="新任务"):
+        notebook.plan({"append": True, "steps": [step("independent", "旧独立题"), step("transfer", "新迁移题")]})
+    assert notebook.export() == before
+    notebook.plan({"append": True, "steps": [step("independent", "新的独立任务"), step("transfer", "新的迁移场景")]})
+    state = notebook.public()
+    assert state["current"] == 2 and state["current_step"]["kind"] == "independent"
+    assert state["steps"][1]["status"] == "skipped"
+    assert state["steps"][-1]["task"] == "后续概念"
+    assert state["attempts"] == before["attempts"]
+    assert state["steps"][1]["hint_level"] == before["steps"][1]["hint_level"]
+    assert len({s["id"] for s in state["steps"]}) == 5
+    notebook.submit("新独立答案")
+    review(notebook)
+    notebook.action("next")
+    notebook.submit("新迁移答案")
+    review(notebook)
+    assert notebook.public()["mastery_verified"]
+    assert notebook.public()["can_continue"]
+
+
 @pytest.mark.parametrize("reason", ["hint", "demonstrate", "incorrect", "uncertain", "partial", "repeated"])
 def test_transfer_does_not_pass_without_sufficient_unassisted_evidence(reason):
     second = "独立创建文本文件" if reason == "repeated" else "迁移到新场景"

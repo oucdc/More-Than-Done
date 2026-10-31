@@ -6,6 +6,7 @@ const els = {
   projectList: $("#project-list"),
   projectMenu: $("#project-context-menu"),
   renameProjectMenu: $("#rename-project-menu"), pinProjectMenu: $("#pin-project-menu"),
+  relocateProjectMenu: $("#relocate-project-menu"), projectDialogTitle: $("#project-dialog-title"),
   pinProjectLabel: $("#pin-project-label"), archiveProjectMenu: $("#archive-project-menu"), deleteProjectMenu: $("#delete-project-menu"),
   renameProjectDialog: $("#rename-project-dialog"), renameProjectInput: $("#rename-project-input"), confirmRenameProject: $("#confirm-rename-project"),
   deleteProjectDialog: $("#delete-project-dialog"), deleteProjectName: $("#delete-project-name"), deleteProjectNote: $("#delete-project-note"), confirmDeleteProject: $("#confirm-delete-project"),
@@ -100,6 +101,7 @@ const els = {
   stepCriteria: $("#step-criteria"),
   assistanceNote: $("#assistance-note"),
   nextStep: $("#next-step"),
+  retryLearning: $("#retry-learning"),
   learningFeedback: $("#learning-feedback"),
   lessonSummary: $("#lesson-summary"),
   composerNote: $("#composer-note"),
@@ -114,6 +116,7 @@ const STATUS_LABELS = {
 
 const ui = {
   data: null,
+  retiredEpochs: new Set(),
   reviewingAttempt: false,
   syncing: false,
   lastChatKey: "",
@@ -282,6 +285,12 @@ function updateScrollPosition(follow = false) {
 }
 
 function renderEnvironment(environment = {}) {
+  if (ui.data?.workspace_error) {
+    els.environmentShell.textContent = "工作区不可用";
+    els.environmentPython.textContent = "重新选择文件夹后检测";
+    els.environmentNote.textContent = ui.data.workspace_error;
+    return;
+  }
   if (!ui.data?.active_project) {
     els.environmentShell.textContent = "选择项目后显示";
     els.environmentPython.textContent = "选择项目后检测";
@@ -300,7 +309,9 @@ function renderEnvironment(environment = {}) {
 /* ---------- state application ---------- */
 
 function applyState(data) {
-  if (ui.data?.active_conversation_id === data.active_conversation_id && (data.version ?? 0) < (ui.data.version ?? 0)) return;
+  if (ui.retiredEpochs.has(data.state_epoch)) return;
+  if (ui.data?.state_epoch === data.state_epoch && (data.version ?? 0) < (ui.data?.version ?? 0)) return;
+  if (ui.data?.state_epoch && ui.data.state_epoch !== data.state_epoch) ui.retiredEpochs.add(ui.data.state_epoch);
   const previousId = ui.data?.active_conversation_id;
   if (previousId !== data.active_conversation_id) {
     if (previousId) ui.drafts.set(previousId, els.message.value);
@@ -584,6 +595,8 @@ function renderLesson(lesson = {}, busy) {
   }
   for (const button of document.querySelectorAll("[data-learning-action]")) button.disabled = busy || !step;
   els.nextStep.disabled = busy || !lesson.can_continue;
+  els.retryLearning.hidden = !lesson.can_retry;
+  els.retryLearning.disabled = busy || !lesson.can_retry;
   els.reviewPendingAttempt.hidden = !lesson.pending_review;
   els.reviewPendingAttempt.disabled = busy || ui.reviewingAttempt;
   els.reviewPendingAttempt.textContent = busy || ui.reviewingAttempt ? "正在审阅，请稍候…" : "请导师审阅这次尝试";
@@ -591,6 +604,7 @@ function renderLesson(lesson = {}, busy) {
   els.stepTransitionNote.textContent = lesson.pending_review
     ? "你的尝试已保存，尚未完成审阅。审阅通过后才能进入下一步；不用重复提交。"
     : lesson.can_continue ? "本步可以继续。点击下方按钮，或在对话中输入“继续”，导航会同步推进。"
+      : lesson.can_retry ? "本次检验尚未通过。点击‘重新练习并检验’，完成新的独立练习和迁移题；原有记录会保留。"
       : step?.status === "needs_revision" ? "本步仍需补充，请根据审阅反馈提交新的尝试。若要先往下学，可以明确跳过，本步不会记为掌握。"
         : "先提交本步的尝试并完成审阅，再继续下一步。";
   const feedback = lesson.last_feedback;
@@ -1056,7 +1070,7 @@ async function refresh() {
 
 async function learningAction(action) {
   try {
-    const data = await api("/api/workspace/learning/action", { method: "POST", body: JSON.stringify({ action }) });
+    const data = await api("/api/workspace/learning/action", { method: "POST", body: JSON.stringify({ action, conversation_id: ui.data?.active_conversation_id }) });
     applyState(data);
   } catch (error) { toast(error.message, true); }
 }
@@ -1125,7 +1139,7 @@ async function submitComposer(path, payload) {
   try {
     const data = await api(path, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({...payload, conversation_id: conversationId}),
     });
     // A new draft may have been typed while the request was in flight.
     if (ui.data?.active_conversation_id === conversationId && els.message.value === sentDraft) els.message.value = "";
@@ -1240,9 +1254,14 @@ async function saveSettings() {
   }
 }
 
-function openProjectDialog() {
-  els.projectNameInput.value = "";
-  els.projectWorkspaceInput.value = "";
+function openProjectDialog(project = null) {
+  const relocating = Boolean(project?.id);
+  ui.relocatingProjectId = relocating ? project.id : null;
+  els.projectDialogTitle.textContent = relocating ? "重新选择工作区文件夹" : "新建项目";
+  els.createProject.textContent = relocating ? "保存路径" : "创建项目";
+  els.projectNameInput.readOnly = relocating;
+  els.projectNameInput.value = relocating ? project.name : "";
+  els.projectWorkspaceInput.value = relocating ? project.workspace : "";
   els.projectDialog.showModal();
   els.projectNameInput.focus();
 }
@@ -1263,18 +1282,19 @@ async function chooseWorkspace() {
   finally { els.chooseWorkspace.disabled = false; }
 }
 
+function applySessionPatch(patch) {
+  if (!ui.data || patch.state_epoch !== ui.data.state_epoch || patch.active_conversation_id !== ui.data.active_conversation_id || patch.version < ui.data.version) return;
+  const events = new Map(ui.data.events.map(item => [item.id, item]));
+  for (const item of patch.events) events.set(item.id, item);
+  applyState({ ...ui.data, ...patch, events: [...events.values()].sort((a, b) => a.id - b.id).slice(-500) });
+}
+
 function connectEvents() {
   if (!window.EventSource) { setConnection("connecting", "轮询连接"); ui.pollTimer = window.setInterval(refresh, 3000); return; }
   const source = new EventSource("/api/workspace/events");
   ui.eventSource = source;
   source.addEventListener("state", event => applyState(JSON.parse(event.data)));
-  source.addEventListener("session", event => {
-    const patch = JSON.parse(event.data);
-    if (!ui.data || patch.active_conversation_id !== ui.data.active_conversation_id || patch.version < ui.data.version) return;
-    const events = new Map(ui.data.events.map(item => [item.id, item]));
-    for (const item of patch.events) events.set(item.id, item);
-    applyState({ ...ui.data, ...patch, events: [...events.values()].sort((a, b) => a.id - b.id).slice(-500) });
-  });
+  source.addEventListener("session", event => applySessionPatch(JSON.parse(event.data)));
   source.onopen = () => { ui.streamConnected = true; setConnection("online", "已连接"); clearInterval(ui.pollTimer); ui.pollTimer = null; };
   source.onerror = () => {
     ui.streamConnected = false;
@@ -1291,16 +1311,17 @@ async function createProject() {
   }
   els.createProject.disabled = true;
   try {
-    const data = await api("/api/workspace/project", {
+    const relocating = ui.relocatingProjectId;
+    const data = await api(relocating ? "/api/workspace/edit-project" : "/api/workspace/project", {
       method: "POST",
-      body: JSON.stringify({
+      body: JSON.stringify(relocating ? {id: relocating, action: "workspace", value: els.projectWorkspaceInput.value} : {
         name: els.projectNameInput.value,
         workspace: els.projectWorkspaceInput.value,
       }),
     });
     els.projectDialog.close();
     applyState(data);
-    toast("项目已创建。");
+    toast(relocating ? "工作区路径已更新，聊天和学习记录已保留。" : "项目已创建。");
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -1319,6 +1340,7 @@ async function confirmRenameProject() {
 }
 els.confirmRenameProject.addEventListener("click", confirmRenameProject);
 els.renameProjectInput.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); confirmRenameProject(); } });
+els.relocateProjectMenu.addEventListener("click", () => { const item = contextProject(); closeProjectMenu(); if (item) openProjectDialog(item); });
 els.pinProjectMenu.addEventListener("click", () => { const item = contextProject(); closeProjectMenu(); if (item) editProject(item.id, "pin", !item.pinned, item.pinned ? "已取消项目置顶。" : "项目已置顶。"); });
 els.archiveProjectMenu.addEventListener("click", () => { const item = contextProject(); closeProjectMenu(); if (item) editProject(item.id, "archive", true, (ui.data.projects.length === 1 ? "项目已归档，当前暂无项目；" : "项目已归档，") + "可在左下角恢复。"); });
 els.deleteProjectMenu.addEventListener("click", () => {
@@ -1418,7 +1440,7 @@ els.reviewPendingAttempt.addEventListener("click", async () => {
   ui.reviewingAttempt = true;
   renderLesson(ui.data.lesson, false);
   try {
-    const data = await api("/api/workspace/chat", {method: "POST", body: JSON.stringify({message: "请先审阅我已经提交的这次尝试，并记录审阅结果。请保留我的原始作答，审阅通过后再决定是否进入下一步。"})});
+    const data = await api("/api/workspace/chat", {method: "POST", body: JSON.stringify({conversation_id: ui.data?.active_conversation_id, message: "请先审阅我已经提交的这次尝试，并记录审阅结果。请保留我的原始作答，审阅通过后再决定是否进入下一步。"})});
     applyState(data);
   } catch (error) { toast(error.message, true); }
   finally { ui.reviewingAttempt = false; renderLesson(ui.data?.lesson || {}, isBusy(ui.data?.status)); }

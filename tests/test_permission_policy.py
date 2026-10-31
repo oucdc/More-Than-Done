@@ -59,15 +59,19 @@ def test_unrecognized_commands_are_never_automatically_approved(command):
     assert read_only_check(command) is None
 
 
-def test_auto_read_only_commands_never_invoke_a_shell(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["request", "auto", "full"])
+def test_read_only_commands_never_invoke_a_shell_after_required_approval(tmp_path, monkeypatch, mode):
     (tmp_path / "report.txt").write_text("demo", encoding="utf-8")
     def forbidden(*args, **kwargs):
         raise AssertionError("No shell execution for automatic read-only checks")
-    monkeypatch.setattr("agent.tools.subprocess.run", forbidden)
-    runtime = ToolRuntime(AgentConfig(tmp_path, permission_mode="auto"))
+    monkeypatch.setattr("agent.tools.run_local_command", forbidden)
+    approvals = []
+    runtime = ToolRuntime(AgentConfig(tmp_path, permission_mode=mode),
+                          approval=lambda tool, args: approvals.append(tool) or True)
     result = json.loads(runtime.execute("run_command", {"command": 'powershell -NoProfile -Command "Get-ChildItem"'}))
     assert result["ok"] and result["execution"] == "read_only_check"
     assert "report.txt" in result["stdout"]
+    assert approvals == (["run_command"] if mode == "request" else [])
 
 
 def test_auto_writes_inside_workspace_but_requests_approval_for_commands_and_outside_paths(tmp_path, monkeypatch):

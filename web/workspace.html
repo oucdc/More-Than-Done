@@ -168,7 +168,7 @@
               </div>
               <div class="assistance-note" id="assistance-note"></div>
               <p class="step-transition-note" id="step-transition-note" role="status"></p>
-              <div class="step-actions"><button class="button primary" id="review-pending-attempt" type="button" hidden>请导师审阅这次尝试</button><button class="button primary" id="next-step" type="button" data-learning-action="next">继续下一步</button><button class="skip-button" type="button" data-learning-action="skip">跳过（不计掌握）</button></div>
+              <div class="step-actions"><button class="button primary" id="review-pending-attempt" type="button" hidden>请导师审阅这次尝试</button><button class="button primary" id="retry-learning" type="button" data-learning-action="retry" hidden>重新练习并检验</button><button class="button primary" id="next-step" type="button" data-learning-action="next">继续下一步</button><button class="skip-button" type="button" data-learning-action="skip">跳过（不计掌握）</button></div>
             </section>
             <section class="learning-feedback" id="learning-feedback" hidden></section>
             <section class="lesson-summary" id="lesson-summary"></section>
@@ -225,7 +225,7 @@
         <div class="dialog-heading">
           <div>
             <span class="eyebrow">NEW PROJECT</span>
-            <h2>新建项目</h2>
+            <h2 id="project-dialog-title">新建项目</h2>
           </div>
           <button class="dialog-close" value="cancel" type="submit" aria-label="关闭">×</button>
         </div>
@@ -250,6 +250,7 @@
 
     <div class="conversation-context-menu" id="project-context-menu" role="menu" aria-label="项目操作" hidden>
       <button type="button" role="menuitem" id="rename-project-menu"><span aria-hidden="true">✎</span> 重命名</button>
+      <button type="button" role="menuitem" id="relocate-project-menu">重新选择文件夹…</button>
       <button type="button" role="menuitem" id="pin-project-menu"><span aria-hidden="true">⌖</span> <span id="pin-project-label">置顶</span></button>
       <button type="button" role="menuitem" id="archive-project-menu"><span aria-hidden="true">▣</span> 归档</button>
       <button type="button" role="menuitem" id="delete-project-menu"><span aria-hidden="true">⌫</span> 删除项目</button>

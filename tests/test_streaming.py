@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import threading
 from types import SimpleNamespace as NS
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -188,6 +188,7 @@ def test_http_sse_delivers_partial_response_before_model_finishes_and_recovers(t
                 if visible:
                     break
             assert kind == "session"
+            assert partial["state_epoch"] == server.workspace.state_epoch
             assert visible[0]["text"] == "第一段"
             assert visible[0]["streaming"] is True
             assert server.agent.worker.is_alive()
@@ -249,6 +250,37 @@ def test_sse_refreshes_sidebar_when_an_inactive_chat_is_deleted(tmp_path):
             assert kind == "state"
             assert state["active_conversation_id"] == second
             assert all(chat["id"] != first for chat in state["conversations"])
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
+@pytest.mark.parametrize("endpoint", ["/api/workspace/config", "/api/agent/config"])
+def test_sse_pushes_permission_changes_while_idle(tmp_path, endpoint):
+    config = AgentConfigStore(tmp_path / "config.json", settings_loader=lambda: Settings(api_key="", model="test"))
+    config.update({"workspace": str(tmp_path), "permission_mode": "request"})
+    server = MoreThanDoneHTTPServer(("127.0.0.1", 0), object(), config_store=config,
+                                   conversation_store=ConversationStore(tmp_path / "chats.json"))
+    server.workspace.create_project({"workspace": str(tmp_path)})
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        with urlopen(base + "/api/workspace/events", timeout=5) as response:
+            kind, before = read_event(response)
+            assert kind == "state" and before["config"]["permission_mode"] == "request"
+            payload = json.dumps({"permission_mode": "full"}).encode("utf-8")
+            req = Request(base + endpoint, data=payload, headers={"Content-Type": "application/json"})
+            with urlopen(req, timeout=5) as saved:
+                assert saved.status == 200
+            kind, after = read_event(response)
+            assert kind == "state"
+            assert after["config"]["permission_mode"] == "full"
+            assert after["version"] > before["version"]
+            assert after["workspace_version"] > before["workspace_version"]
+            assert after["state_epoch"] == before["state_epoch"]
+            assert after["active_conversation_id"] == before["active_conversation_id"]
     finally:
         server.shutdown()
         server.server_close()

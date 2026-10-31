@@ -114,3 +114,18 @@ def test_corrupt_config_is_reported_and_not_overwritten(tmp_path):
 def test_config_dataclass_rejects_missing_workspace(tmp_path):
     with pytest.raises(AgentConfigError):
         AgentConfig(workspace=tmp_path / "missing")
+
+
+def test_config_can_be_repaired_after_its_workspace_disappears(tmp_path):
+    workspace = tmp_path / "old"
+    workspace.mkdir()
+    store = AgentConfigStore(tmp_path / "config.json", settings_loader=no_env_settings)
+    store.update({"workspace": str(workspace), "api_key": "keep-key", "permission_mode": "request"})
+    workspace.rmdir()
+    with pytest.raises(AgentConfigError):
+        store.load()
+    assert store.load(require_workspace=False).workspace == workspace
+    store.update({"model": "updated-model"})
+    config = store.update({"workspace": str(tmp_path)})
+    assert config.workspace == tmp_path and config.api_key == "keep-key"
+    assert config.model == "updated-model" and config.permission_mode == "request"

@@ -117,7 +117,7 @@ def test_workspace_page_and_api_flow(tmp_path):
             base,
             "/api/workspace/chat",
             method="POST",
-            payload={"message": "开始工作"},
+            payload={"message": "开始工作", "conversation_id": state["active_conversation_id"]},
         )
         assert status == 200
         deadline = time.time() + 5
@@ -170,6 +170,38 @@ def test_workspace_page_and_api_flow(tmp_path):
         assert status == 200 and empty["projects"] == []
         assert empty["active_project"] is None and empty["active_conversation_id"] is None
         assert empty["events"] == [] and empty["config"].get("workspace") in (None, "")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_legacy_config_and_new_chat_cannot_overwrite_workspace_history(tmp_path):
+    config = AgentConfigStore(tmp_path / "config.json", settings_loader=no_env_settings)
+    config.update({"workspace": str(tmp_path), "api_key": "test-only"})
+    conversations = ConversationStore(tmp_path / "chats.json")
+    server = web_ui.MoreThanDoneHTTPServer(("127.0.0.1", 0), object(), config_store=config, conversation_store=conversations)
+    server.workspace.create_project({"workspace": str(tmp_path)})
+    server.agent.messages = [{"role": "user", "content": "keep"}, {"role": "assistant", "content": "kept"}]
+    server.agent.lesson.plan({"goal": "keep goal", "steps": [{"title": "step", "kind": "guided", "task": "keep task", "success_criteria": "evidence"}]})
+    server.workspace.snapshot()
+    before = conversations.load()["conversations"][0]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        for path, payload in [("/api/agent/config", {"model": "changed-model"}), ("/api/agent/new", {})]:
+            assert request(base, path, method="POST", payload=payload)[0] == 200
+            assert request(base, "/api/workspace/state")[0] == 200
+            after = conversations.load()["conversations"][0]
+            assert after["id"] == before["id"]
+            assert after["messages"] == before["messages"]
+            assert after["lesson"] == before["lesson"]
+        chat_id = before["id"]
+        for payload in [{"message": "wrong chat"}, {"message": "wrong chat", "conversation_id": None}, {"message": "wrong chat", "conversation_id": "stale-chat"}]:
+            assert request(base, "/api/workspace/chat", method="POST", payload=payload)[0] == 409
+        assert server.workspace.snapshot()["active_conversation_id"] == chat_id
+        assert server.agent.worker is None
     finally:
         server.shutdown()
         server.server_close()

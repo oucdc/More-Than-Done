@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='mtd-011-smoke-', ignore_cleanup_errors=
         assert state['projects'] == [] and state['active_project_id'] is None
         state=request('/api/workspace/project', {'name': '验证项目', 'workspace': str(workspace)})
         print('Packaged environment:',state['environment'])
-        request('/api/workspace/chat',{'message':'验证本机 Python'})
+        request('/api/workspace/chat',{'message':'验证本机 Python','conversation_id':state['active_conversation_id']})
         deadline=time.monotonic()+15
         while time.monotonic()<deadline:
             state=request('/api/workspace/state')

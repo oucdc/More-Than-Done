@@ -211,3 +211,31 @@ def test_session_stop_interrupts_command_without_another_model_call(tmp_path):
     outcomes = [json.loads(e['result']) for e in state['events'] if e['kind'] == 'tool_result']
     assert outcomes and outcomes[-1]['cancelled'] is True
     assert len(client.requests) == 1
+
+
+def test_cancelling_multi_tool_turn_completes_history_and_next_turn_works(tmp_path):
+    import json
+    session, client, store = make_session(tmp_path, [
+        assistant(tool_calls=[tool_call("list_dir", call_id="first"), tool_call("list_dir", call_id="second")]),
+        assistant(content="可以继续聊天"),
+    ])
+    original_emit = session.emit
+
+    def cancel_after_first(kind, text, extra=None):
+        original_emit(kind, text, extra)
+        if kind == "tool_result" and extra["call_id"] == "first":
+            session.cancel_event.set()
+
+    session.emit = cancel_after_first
+    session.send("读取两次")
+    wait_status(session, "idle")
+    results = [m for m in session.messages if m["role"] == "tool"]
+    assert [m["tool_call_id"] for m in results] == ["first", "second"]
+    assert json.loads(results[1]["content"])["cancelled"]
+    assert len([e for e in session.events if e["kind"] == "tool_start"]) == 1
+    assert len(client.requests) == 1
+    session.send("继续聊天")
+    wait_status(session, "idle")
+    assert session.messages[-1]["content"] == "可以继续聊天"
+    tool_results = [m["tool_call_id"] for m in client.requests[-1]["messages"] if m["role"] == "tool"]
+    assert tool_results == ["first", "second"]

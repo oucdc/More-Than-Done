@@ -43,7 +43,7 @@ class ServerHarness:
             client_factory=lambda _settings: FakeClient(responses),
         )
         self.server = web_ui.MoreThanDoneHTTPServer(("127.0.0.1", 0), object())
-        self.server.agent = self.session
+        self.server.legacy_agent = self.session
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"

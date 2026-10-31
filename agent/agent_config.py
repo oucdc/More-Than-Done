@@ -1,6 +1,6 @@
 """Local agent settings, including workspace and permission choices."""
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 import json
 import os
@@ -28,8 +28,9 @@ class AgentConfig:
     reasoning_level: str = "medium"
     key_source: str = "none"
     permission_mode: str = "custom"
+    require_workspace: InitVar[bool] = True
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, require_workspace: bool) -> None:
         if not isinstance(self.workspace, Path):
             raise TypeError("workspace must be a Path.")
         if not isinstance(self.api_key, str):
@@ -50,7 +51,7 @@ class AgentConfig:
         ):
             if type(getattr(self, name)) is not bool:
                 raise TypeError(f"{name} must be a bool.")
-        if not self.workspace.is_dir():
+        if require_workspace and not self.workspace.is_dir():
             raise AgentConfigError(f"工作区不存在或不是目录：{self.workspace}")
 
     @property
@@ -97,7 +98,7 @@ class AgentConfigStore:
         except (ValueError, OSError):
             return Settings(api_key="", model=DEFAULT_MODEL, base_url=DEFAULT_BASE_URL)
 
-    def load(self) -> AgentConfig:
+    def load(self, *, require_workspace: bool = True) -> AgentConfig:
         if not self.path.exists():
             settings = self._environment_settings()
             return AgentConfig(
@@ -132,7 +133,7 @@ class AgentConfigStore:
             workspace = Path(workspace_raw).expanduser().resolve()
         except OSError as exc:
             raise AgentConfigError(f"工作区路径无效：{workspace_raw}") from exc
-        if not workspace.is_dir():
+        if require_workspace and not workspace.is_dir():
             raise AgentConfigError(f"工作区不存在或不是目录：{workspace}")
 
         key = document.get("api_key", "")
@@ -175,19 +176,20 @@ class AgentConfigStore:
             reasoning_level=reasoning_level,
             key_source=key_source,
             permission_mode=permission_mode,
+            require_workspace=require_workspace,
         )
 
     def update(self, payload: object) -> AgentConfig:
         """Update settings from a UI payload; a blank api_key keeps the old key."""
         if not isinstance(payload, dict):
             raise AgentConfigError("配置内容必须是 JSON 对象。")
-        current = self.load()
+        current = self.load(require_workspace=False)
 
         workspace_raw = payload.get("workspace", str(current.workspace))
         if not isinstance(workspace_raw, str) or not workspace_raw.strip():
             raise AgentConfigError("工作区路径不能为空。")
         workspace = Path(workspace_raw).expanduser().resolve()
-        if not workspace.is_dir():
+        if "workspace" in payload and not workspace.is_dir():
             raise AgentConfigError(f"工作区不存在或不是目录：{workspace}")
 
         if payload.get("clear_api_key") is True:
@@ -237,6 +239,7 @@ class AgentConfigStore:
             reasoning_level=reasoning_level,
             key_source="config" if api_key else ("environment" if settings.api_key else "none"),
             permission_mode=permission_mode,
+            require_workspace="workspace" in payload,
         )
         self.save(config)
         return config

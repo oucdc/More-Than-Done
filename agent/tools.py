@@ -196,6 +196,8 @@ class ToolRuntime:
         self._active_tool = name
         self._active_arguments = arguments
         try:
+            if not self.root.is_dir():
+                raise ToolPermissionError("工作区文件夹不存在，请重新选择文件夹。")
             if not isinstance(arguments, dict):
                 raise ToolPermissionError("工具参数必须是 JSON 对象。")
             if name == "plan_learning":
@@ -216,7 +218,7 @@ class ToolRuntime:
             result = handler(arguments)
             if name == "read_file":
                 self.notebook.observe({"type": "file_read", "path": result.get("path"), "size": result.get("size"), "truncated": result.get("truncated", False)})
-            elif name in {"write_file", "run_command"}:
+            elif name == "write_file" or (name == "run_command" and result.get("execution") != "read_only_check"):
                 self.notebook.record_agent_execution()
             return json.dumps({"ok": True, **result}, ensure_ascii=False)
         except ToolPermissionError as exc:
@@ -471,7 +473,7 @@ class ToolRuntime:
         if not cwd.is_dir():
             raise ToolPermissionError("cwd 不是目录。")
         self._require_shell(args)
-        check = read_only_check(command) if self.config.permission_mode == "auto" else None
+        check = read_only_check(command)
         if check:
             # Exact known checks use a read-only Python adapter, not arbitrary shell text.
             if check == "location":

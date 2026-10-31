@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import threading
+from uuid import uuid4
 from typing import Any
 
-from agent.agent_config import AgentConfigError, AgentConfigStore
+from agent.agent_config import AgentConfigStore
 from agent.command_environment import describe_environment
 from agent.conversations import ConversationStore, ConversationStoreError
 from agent.local_agent import AgentSession
@@ -50,6 +51,7 @@ class WorkspaceManager:
         self.lock = threading.RLock()
         self._loaded_conversation_id: str | None = None
         self.revision = 0
+        self.state_epoch = uuid4().hex
         self.session.on_update = self._persist_session
 
     def _persist_session(self) -> None:
@@ -76,9 +78,8 @@ class WorkspaceManager:
             raise RuntimeError("当前 Agent 仍在运行，请先取消或等待完成。")
 
     def _sync_workspace_locked(self, workspace: str) -> None:
-        config = self.config_store.load()
-        if config.workspace != Path(workspace):
-            self.config_store.update({"workspace": workspace})
+        # The project document is the only persisted owner of its execution root.
+        self.session.bind_workspace(workspace)
 
     def _load_active_locked(self, conversation: dict[str, Any]) -> None:
         if self._loaded_conversation_id == conversation["id"]:
@@ -112,6 +113,7 @@ class WorkspaceManager:
             document["active_project_id"] = None
             document["active_conversation_id"] = None
             self._clear_active_locked()
+            self._sync_workspace_locked(str(PROJECT_ROOT))
             return document
 
         project_conversations = [
@@ -211,10 +213,12 @@ class WorkspaceManager:
             "active_conversation_id": conversation["id"] if conversation else None,
             "active_project": project,
             "active_conversation": active_summary,
-            "environment": describe_environment(Path(project["workspace"])) if project else {},
+            "environment": describe_environment(Path(project["workspace"])) if project and Path(project["workspace"]).is_dir() else {},
+            "workspace_error": "工作区文件夹不存在，请在项目菜单中重新选择文件夹。" if project and not Path(project["workspace"]).is_dir() else None,
             "models": MODEL_OPTIONS,
             "reasoning_levels": REASONING_LEVELS,
             "workspace_version": self.revision,
+            "state_epoch": self.state_epoch,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -345,6 +349,8 @@ class WorkspaceManager:
                     raise ValueError("操作参数无效。")
                 if action == "pin" and target.get("archived", False):
                     raise ValueError("请先恢复已归档的项目。")
+            elif action == "workspace":
+                value = ConversationStore.make_project(target["name"], value)["workspace"]
             elif action != "delete":
                 raise ValueError("不支持此项目操作。")
 
@@ -356,21 +362,20 @@ class WorkspaceManager:
                 target["pinned"] = value
             elif action == "archive":
                 target["archived"] = value
+            elif action == "workspace":
+                target["workspace"] = value
             else:
                 document["projects"] = [item for item in document["projects"] if item["id"] != project_id]
                 document["conversations"] = [item for item in document["conversations"] if item["project_id"] != project_id]
 
             replacement = None
-            old_workspace = None
             removing_active = active and (action == "delete" or (action == "archive" and value))
             restoring_empty = action == "archive" and value is False and document["active_project_id"] is None
             if removing_active or restoring_empty:
                 project = target if restoring_empty else next((item for item in document["projects"] if not item.get("archived", False)), None)
-                old_workspace = self.config_store.load().workspace
                 if project is None:
                     document["active_project_id"] = None
                     document["active_conversation_id"] = None
-                    self._sync_workspace_locked(str(PROJECT_ROOT))
                 else:
                     choices = [item for item in document["conversations"] if item["project_id"] == project["id"] and not item.get("archived", False)]
                     replacement = max(choices, key=lambda item: item["updated_at"]) if choices else ConversationStore.make_conversation(project["id"])
@@ -378,18 +383,18 @@ class WorkspaceManager:
                         document["conversations"].append(replacement)
                     document["active_project_id"] = project["id"]
                     document["active_conversation_id"] = replacement["id"]
-                    self._sync_workspace_locked(project["workspace"])
-            try:
-                self.conversation_store.save(document)
-            except Exception:
-                if old_workspace is not None:
-                    self._sync_workspace_locked(str(old_workspace))
-                raise
+            # Commit before changing the live execution root or conversation.
+            self.conversation_store.save(document)
+            if removing_active or restoring_empty:
+                self._sync_workspace_locked(project["workspace"] if project else str(PROJECT_ROOT))
             if replacement is not None:
                 self._loaded_conversation_id = None
                 self._load_active_locked(replacement)
             if removing_active and replacement is None:
                 self._clear_active_locked()
+            if action == "workspace" and active:
+                self._sync_workspace_locked(value)
+                self.session.invalidate_system_prompt()
             self.revision += 1
             self.session.notify_state_change()
             return self._state_locked()
@@ -457,7 +462,6 @@ class WorkspaceManager:
             self._persist_locked(document)
             active = document["active_conversation_id"] == conversation_id
             replacement = None
-            old_workspace = None
             if action == "rename":
                 target["title"] = value.strip()
                 target["title_custom"] = True
@@ -473,17 +477,12 @@ class WorkspaceManager:
                     document["active_conversation_id"] = replacement["id"]
             elif action == "move":
                 if active:
-                    old_workspace = self.config_store.load().workspace
-                    self._sync_workspace_locked(project["workspace"])
                     document["active_project_id"] = project["id"]
                 target["project_id"] = project["id"]
 
-            try:
-                self.conversation_store.save(document)
-            except Exception:
-                if old_workspace is not None:
-                    self._sync_workspace_locked(str(old_workspace))
-                raise
+            self.conversation_store.save(document)
+            if action == "move" and active:
+                self._sync_workspace_locked(project["workspace"])
             if replacement is not None:
                 self._loaded_conversation_id = None
                 self._load_active_locked(replacement)
@@ -494,21 +493,28 @@ class WorkspaceManager:
             return self._state_locked()
 
     def save_config(self, payload: object) -> dict[str, Any]:
-        with self.lock:
-            document = self._ensure_locked()
+        with self.lock, self.session.lock:
+            self._ensure_locked()
             self._assert_idle_locked()
             if not isinstance(payload, dict):
                 raise ValueError("配置内容必须是 JSON 对象。")
-            project = self._active_project_locked(document)
             values = dict(payload)
-            values["workspace"] = project["workspace"] if project else str(PROJECT_ROOT)
+            # The project owns its path; settings must remain usable offline.
+            values.pop("workspace", None)
             self.config_store.update(values)
             self.session.invalidate_system_prompt()
+            self.revision += 1
+            self.session.notify_state_change()
             return self._state_locked()
 
-    def send(self, message: object) -> dict[str, Any]:
+    def _check_target_locked(self, conversation_id: object) -> None:
+        if conversation_id is not None and conversation_id != self._loaded_conversation_id:
+            raise RuntimeError("对话已切换，请确认当前对话后重新发送。")
+
+    def send(self, message: object, *, conversation_id: object = None) -> dict[str, Any]:
         with self.lock:
             self._require_project_locked()
+            self._check_target_locked(conversation_id)
             self.session.send(message)
             return self._state_locked()
 
@@ -524,14 +530,16 @@ class WorkspaceManager:
             self.session.cancel()
             return self._state_locked()
 
-    def teaching_action(self, action: object) -> dict[str, Any]:
+    def teaching_action(self, action: object, *, conversation_id: object = None) -> dict[str, Any]:
         with self.lock:
             self._require_project_locked()
+            self._check_target_locked(conversation_id)
             self.session.teaching_action(action)
             return self._state_locked()
 
-    def submit_attempt(self, answer: object) -> dict[str, Any]:
+    def submit_attempt(self, answer: object, *, conversation_id: object = None) -> dict[str, Any]:
         with self.lock:
             self._require_project_locked()
+            self._check_target_locked(conversation_id)
             self.session.send(answer, intent="attempt")
             return self._state_locked()

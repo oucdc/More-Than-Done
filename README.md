@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**Version 0.1.5 · Windows desktop learning workspace**
+**Version 0.1.6 · Windows desktop learning workspace**
 
 More Than Done is an educational AI agent that helps you understand a task, try it yourself, receive feedback, and build the ability to work independently. It combines a local project workspace, streaming chat, and a learning plan whose progress is recorded by the application.
 
@@ -12,6 +12,7 @@ More Than Done is an educational AI agent that helps you understand a task, try 
 - Rename, pin, archive, restore, move, and delete conversations; manage projects from their context menus. Deleting a project removes its saved conversations, not the workspace files.
 - Receive streaming model replies and inspect readable tool results, exit codes, timeouts, and command output.
 - Follow small learning steps, submit your own attempts, request graded help, and advance after review. Assisted work is recorded separately from independent evidence.
+- Reconnect moved project folders with **重新选择文件夹…** in the project menu. After an unsuccessful transfer check, **重新练习并检验** requests a new independent exercise and transfer task while preserving previous evidence.
 - Read long code, tables, and messages inside their own scroll regions without widening the window.
 - Choose an approval mode for file changes and commands. Inspect the detected shell and Python path in settings.
 - Keep settings, project history, and learning records on the local machine.
@@ -78,7 +79,7 @@ Node.js is only needed for the JavaScript syntax check. Native layout checks use
 Build the Windows executable and assemble a portable release package:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.5-windows-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.6-windows-x64
 .\.venv\Scripts\python.exe -m scripts.package_release
 ```
 

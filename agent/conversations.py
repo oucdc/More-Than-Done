@@ -130,7 +130,7 @@ class ConversationStore:
                 "archived": raw.get("archived", False),
                 "created_at": str(raw.get("created_at") or _now()),
                 "updated_at": str(raw.get("updated_at") or _now()),
-                "messages": [item for item in messages if isinstance(item, dict)][-200:],
+                "messages": [item for item in messages if isinstance(item, dict)],
                 "events": [item for item in events if isinstance(item, dict)][-500:],
                 "lesson": lesson,
             })

@@ -277,6 +277,8 @@ class MoreThanDoneHTTPServer(ThreadingHTTPServer):
         self.closing = threading.Event()
         self.agent_config = config_store or AgentConfigStore()
         self.agent = AgentSession(self.agent_config)
+        # The older single-chat page must not reset the workspace's live chat.
+        self.legacy_agent = AgentSession(self.agent_config)
         self.workspace = WorkspaceManager(
             self.agent_config,
             conversation_store or ConversationStore(),
@@ -390,7 +392,7 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/agent/config":
             try:
-                self._json(200, {"config": self.server.agent.public_config()})
+                self._json(200, {"config": self.server.legacy_agent.public_config()})
             except AgentConfigError as exc:
                 self._json(400, {"error": str(exc), "config": {}})
             return
@@ -400,7 +402,7 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self._json(400, {"error": "事件游标无效。"})
                 return
-            self._json(200, self.server.agent.snapshot(max(0, after_id)))
+            self._json(200, self.server.legacy_agent.snapshot(max(0, after_id)))
             return
         if parsed.path == "/api/state":
             try:
@@ -458,7 +460,8 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
                     elif current["version"] != previous["version"]:
                         old_events = {event["id"]: event for event in previous["events"]}
                         updated = [event for event in current["events"] if event != old_events.get(event["id"])]
-                        send("session", {**current, "events": updated, "active_conversation_id": conversation_id})
+                        send("session", {**current, "events": updated, "active_conversation_id": conversation_id,
+                                         "state_epoch": self.server.workspace.state_epoch})
                     else:
                         self.wfile.write(b": keepalive\n\n")
                         self.wfile.flush()
@@ -490,15 +493,15 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
                 elif self.path == "/api/workspace/config":
                     state = self.server.workspace.save_config(payload)
                 elif self.path == "/api/workspace/chat":
-                    state = self.server.workspace.send(payload.get("message"))
+                    state = self.server.workspace.send(payload.get("message"), conversation_id=payload.get("conversation_id") or "")
                 elif self.path == "/api/workspace/approve":
                     state = self.server.workspace.approve(payload.get("id"), payload.get("allow"))
                 elif self.path == "/api/workspace/cancel":
                     state = self.server.workspace.cancel()
                 elif self.path == "/api/workspace/learning/action":
-                    state = self.server.workspace.teaching_action(payload.get("action"))
+                    state = self.server.workspace.teaching_action(payload.get("action"), conversation_id=payload.get("conversation_id") or "")
                 elif self.path == "/api/workspace/learning/attempt":
-                    state = self.server.workspace.submit_attempt(payload.get("answer"))
+                    state = self.server.workspace.submit_attempt(payload.get("answer"), conversation_id=payload.get("conversation_id") or "")
                 else:
                     self._json(404, {"error": "找不到请求的操作。"})
                     return
@@ -506,19 +509,23 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
                 return
             if self.path.startswith("/api/agent/"):
                 if self.path == "/api/agent/config":
-                    self.server.agent.save_config(payload)
+                    with self.server.workspace.lock, self.server.agent.lock:
+                        self.server.legacy_agent.save_config(payload)
+                        # Model and permissions are shared; execution roots are not.
+                        self.server.workspace.revision += 1
+                        self.server.agent.notify_state_change()
                 elif self.path == "/api/agent/chat":
-                    self.server.agent.send(payload.get("message"))
+                    self.server.legacy_agent.send(payload.get("message"))
                 elif self.path == "/api/agent/approve":
-                    self.server.agent.approve(payload.get("id"), payload.get("allow"))
+                    self.server.legacy_agent.approve(payload.get("id"), payload.get("allow"))
                 elif self.path == "/api/agent/cancel":
-                    self.server.agent.cancel()
+                    self.server.legacy_agent.cancel()
                 elif self.path == "/api/agent/new":
-                    self.server.agent.new_conversation()
+                    self.server.legacy_agent.new_conversation()
                 else:
                     self._json(404, {"error": "找不到请求的操作。"})
                     return
-                self._json(200, self.server.agent.snapshot())
+                self._json(200, self.server.legacy_agent.snapshot())
                 return
             if self.path == "/api/start" or self.path == "/api/resume":
                 self.server.session.start()

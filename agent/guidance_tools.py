@@ -6,7 +6,7 @@ def definition(name, description, properties, required):
 
 
 GUIDANCE_TOOL_DEFINITIONS = [
-    definition("plan_learning", "针对用户真实的学习目标创建分步计划。每步只有一个具体任务和完成标准，最后安排新的独立/迁移练习。已有计划只能追加，不能覆盖或抹掉进度。任务不限学科；保持用户原本想学的内容。", {
+    definition("plan_learning", "针对用户真实的学习目标创建分步计划。每步只有一个具体任务和完成标准，最后安排新的独立/迁移练习。已有计划只能追加，不能覆盖或抹掉进度。retry_requested=true 时以 append=true 安排恰好两步：新的 independent 和新的 transfer，系统会导航到新练习并保留旧证据。任务不限学科；保持用户原本想学的内容。", {
         "goal": {"type": "string"}, "append": {"type": "boolean"},
         "steps": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "object", "properties": {
             "title": {"type": "string"}, "task": {"type": "string", "description": "交给用户亲手尝试的一个小任务，不直接填写答案。"},
