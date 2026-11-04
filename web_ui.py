@@ -8,6 +8,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
+import secrets
 from pathlib import Path
 import queue
 import sys
@@ -19,6 +20,7 @@ import webbrowser
 
 from agent.agent_config import AgentConfigError, AgentConfigStore
 from agent.conversations import ConversationStore, ConversationStoreError
+from agent.data_lock import DataDirectoryLock, DataDirectoryLockError
 from agent.llm_client import LLMClient
 from agent.local_agent import AgentSession
 from agent.tutor_agent import TutorAgent
@@ -275,23 +277,43 @@ class MoreThanDoneHTTPServer(ThreadingHTTPServer):
     ) -> None:
         self.session = WebSession(tutor)
         self.closing = threading.Event()
+        self.csrf_token = secrets.token_urlsafe(32)
+        records = conversation_store or ConversationStore()
+        self.data_lock = DataDirectoryLock(records.path.parent)
+        self.data_lock.acquire()
         self.agent_config = config_store or AgentConfigStore()
         self.agent = AgentSession(self.agent_config)
         # The older single-chat page must not reset the workspace's live chat.
         self.legacy_agent = AgentSession(self.agent_config)
         self.workspace = WorkspaceManager(
             self.agent_config,
-            conversation_store or ConversationStore(),
+            records,
             self.agent,
         )
-        super().__init__(address, MoreThanDoneRequestHandler)
+        try:
+            super().__init__(address, MoreThanDoneRequestHandler)
+        except Exception:
+            self.data_lock.release()
+            raise
 
     def shutdown_in_background(self) -> None:
         threading.Thread(target=self.shutdown, name="more-than-done-shutdown", daemon=True).start()
 
     def server_close(self) -> None:
         self.closing.set()
-        super().server_close()
+        errors = []
+        try:
+            for session in (self.agent, self.legacy_agent):
+                try:
+                    session.close()
+                except Exception as exc:
+                    errors.append(exc)
+        finally:
+            super().server_close()
+        if not any(session.worker and session.worker.is_alive() for session in (self.agent, self.legacy_agent)):
+            self.data_lock.release()
+        if errors:
+            raise errors[0]
 
 
 class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
@@ -313,19 +335,26 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def _json(self, status: int, payload: dict[str, object]) -> None:
+        payload = {**payload, "csrf_token": self.server.csrf_token}
         encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self._send(status, "application/json; charset=utf-8", encoded)
 
     def _host_is_local(self) -> bool:
-        host = self.headers.get("Host", "").split(":", 1)[0].strip("[]").casefold()
-        if host not in {"127.0.0.1", "localhost"}:
+        host = self.headers.get("Host", "")
+        try:
+            parsed_host = urlparse("http://" + host)
+            if parsed_host.hostname not in {"127.0.0.1", "localhost"} or parsed_host.port != self.server.server_port:
+                return False
+        except ValueError:
             return False
         origin = self.headers.get("Origin")
         if not origin:
             return True
-        return urlparse(origin).hostname in {"127.0.0.1", "localhost"}
+        return origin == "http://" + host
 
     def _read_json(self) -> dict[str, Any]:
+        if self.headers.get_content_type() != "application/json":
+            raise ValueError("请使用 application/json 提交请求。")
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
@@ -346,6 +375,25 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
             return
 
         parsed = urlparse(self.path)
+        if parsed.path == "/api/security":
+            self._json(200, {"ready": True})
+            return
+        if parsed.path in {"/api/workspace/portfolio", "/api/workspace/history", "/api/workspace/practice-copy"}:
+            try:
+                if parsed.path.endswith("/portfolio"):
+                    result = self.server.workspace.portfolio()
+                elif parsed.path.endswith("/history"):
+                    query = parse_qs(parsed.query)
+                    result = self.server.workspace.history(query.get("conversation_id", [""])[0],
+                                                           int(query.get("before", ["0"])[0]),
+                                                           int(query.get("limit", ["100"])[0]))
+                else:
+                    query = parse_qs(parsed.query)
+                    result = self.server.workspace.practice(conversation_id=query.get("conversation_id", [None])[0])
+                self._json(200, result)
+            except (AgentConfigError, ConversationStoreError, ValueError, RuntimeError, OSError) as exc:
+                self._json(400, {"error": str(exc)})
+            return
         if parsed.path == "/api/workspace/events":
             self._stream_workspace()
             return
@@ -421,6 +469,7 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
         """Push live updates without saving or resending the whole chat per token."""
         try:
             initial = self.server.workspace.snapshot()
+            initial["csrf_token"] = self.server.csrf_token
         except (AgentConfigError, ConversationStoreError, ValueError) as exc:
             self._json(400, {"error": str(exc)})
             return
@@ -473,8 +522,16 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
         if not self._host_is_local():
             self._json(403, {"error": "仅允许本机访问。"})
             return
+        if self.headers.get("Origin") or self.headers.get("Sec-Fetch-Site"):
+            supplied = self.headers.get("X-MTD-CSRF", "")
+            if not secrets.compare_digest(supplied, self.server.csrf_token):
+                self._json(403, {"error": "页面连接已过期，请刷新后重试。"})
+                return
         try:
             payload = self._read_json()
+            if self.server.closing.is_set():
+                self._json(503, {"error": "工作台正在关闭，请稍后重新打开。"})
+                return
             if self.path.startswith("/api/workspace/"):
                 if self.path == "/api/workspace/project":
                     state = self.server.workspace.create_project(payload)
@@ -501,7 +558,21 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
                 elif self.path == "/api/workspace/learning/action":
                     state = self.server.workspace.teaching_action(payload.get("action"), conversation_id=payload.get("conversation_id") or "")
                 elif self.path == "/api/workspace/learning/attempt":
-                    state = self.server.workspace.submit_attempt(payload.get("answer"), conversation_id=payload.get("conversation_id") or "")
+                    state = self.server.workspace.submit_attempt(
+                        payload.get("answer"), conversation_id=payload.get("conversation_id") or "",
+                        paths=payload.get("paths"), prediction=payload.get("prediction"),
+                        confidence=payload.get("confidence"), observed_result=payload.get("observed_result"))
+                elif self.path == "/api/workspace/learning/challenge":
+                    state = self.server.workspace.start_challenge(payload.get("skill_id"))
+                elif self.path == "/api/workspace/learning/prediction":
+                    state = self.server.workspace.record_prediction(
+                        payload.get("prediction"), payload.get("confidence"),
+                        conversation_id=payload.get("conversation_id") or "")
+                elif self.path == "/api/workspace/practice-copy":
+                    state = self.server.workspace.make_practice_copy(payload.get("paths"),
+                                                                    conversation_id=payload.get("conversation_id") or "")
+                elif self.path == "/api/workspace/practice-reset":
+                    state = self.server.workspace.practice(reset=True, conversation_id=payload.get("conversation_id") or "")
                 else:
                     self._json(404, {"error": "找不到请求的操作。"})
                     return
@@ -557,6 +628,9 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
         except RuntimeError as exc:
             self._json(409, {"error": str(exc)})
             return
+        except OSError as exc:
+            self._json(400, {"error": f"文件操作未完成，请检查文件夹权限。{exc}"})
+            return
         self._json(200, self.server.session.snapshot())
 
     def _serve_file(self, filename: str, content_type: str) -> None:
@@ -597,6 +671,9 @@ def main() -> int:
         server = MoreThanDoneHTTPServer(("127.0.0.1", args.port), tutor)
     except ValueError as exc:
         _show_startup_error("配置错误", str(exc))
+        return 2
+    except DataDirectoryLockError as exc:
+        _show_startup_error("工作台已打开", str(exc))
         return 2
     except OSError as exc:
         _show_startup_error("无法启动图形界面", str(exc))

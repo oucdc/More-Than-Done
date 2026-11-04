@@ -6,7 +6,7 @@ def definition(name, description, properties, required):
 
 
 GUIDANCE_TOOL_DEFINITIONS = [
-    definition("plan_learning", "针对用户真实的学习目标创建分步计划。每步只有一个具体任务和完成标准，最后安排新的独立/迁移练习。已有计划只能追加，不能覆盖或抹掉进度。retry_requested=true 时以 append=true 安排恰好两步：新的 independent 和新的 transfer，系统会导航到新练习并保留旧证据。任务不限学科；保持用户原本想学的内容。", {
+    definition("plan_learning", "针对用户真实的学习目标创建分步计划。每步只有一个具体任务和完成标准，最后安排新的独立/迁移练习。独立和迁移任务必须与历史及本计划中所有先前任务不同，普通追加也不能重复旧题。已有计划只能追加，不能覆盖或抹掉进度。retry_requested=true 时以 append=true 安排恰好两步：新的 independent 和新的 transfer，系统会导航到新练习并保留旧证据。任务不限学科；保持用户原本想学的内容。", {
         "goal": {"type": "string"}, "append": {"type": "boolean"},
         "steps": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "object", "properties": {
             "title": {"type": "string"}, "task": {"type": "string", "description": "交给用户亲手尝试的一个小任务，不直接填写答案。"},
@@ -14,7 +14,7 @@ GUIDANCE_TOOL_DEFINITIONS = [
             "kind": {"type": "string", "enum": ["explain", "guided", "independent", "transfer"]},
         }, "required": ["title", "task", "success_criteria", "kind"], "additionalProperties": False}},
     }, ["goal", "steps"]),
-    definition("review_learning_attempt", "审阅当前记录中真实用户提交的尝试，必要时先读取用户提到的工作区文件。不接受模型自行编造的用户答案。依据任务标准和实际证据评价；证据不足用 uncertain/unavailable。该工具不推进步骤，掌握资格由 Python 决定。", {
+    definition("review_learning_attempt", "审阅当前记录中真实用户提交的尝试。submission.artifacts是提交时固定的作品快照，包含SHA-256指纹、系统检查和文本；评价作品时引用该快照及具体文本行，content_truncated=true时只能依据已提供部分作出判断。不要将当前磁盘文件冒充提交时版本。系统checks只验证对应的客观条件，不能等同于完整正确性。submission.prediction/confidence/observed_result记录用户先前的预测、信心和实际结果，请对照反馈。不接受模型自行编造的用户答案。依据任务标准和实际证据评价；证据不足用 uncertain/unavailable。该工具不推进步骤，掌握资格由 Python 决定。", {
         "submission_id": {"type": "string"},
         "correctness": {"type": "string", "enum": ["correct", "partially_correct", "incorrect", "uncertain"]},
         "reasoning_quality": {"type": "string", "enum": ["sound", "partial", "unsound", "unavailable"]},

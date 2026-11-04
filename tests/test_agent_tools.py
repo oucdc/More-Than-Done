@@ -162,3 +162,51 @@ def test_shell_does_not_pass_deepseek_or_api_key_environment(tmp_path, monkeypat
     assert response["ok"] is True
     assert "super-secret-value" not in response["stdout"]
     assert "another-secret" not in response["stdout"]
+
+
+@pytest.mark.parametrize("name", [".env.local", ".env.production", ".ENV.DEVELOPMENT", "service.key", "service.pem", ".npmrc", "credentials.json"])
+def test_credential_variants_are_blocked_for_read_search_and_write(tmp_path, name):
+    target = tmp_path / name
+    target.write_text("DEMO_API_KEY=FAKE_CREDENTIAL_FOR_TEST", encoding="utf-8")
+    runtime = ToolRuntime(AgentConfig(tmp_path, permission_mode="request"), approval=lambda *args: True)
+    assert not result(runtime, "read_file", {"path": name})["ok"]
+    assert not result(runtime, "write_file", {"path": name, "content": "replacement"})["ok"]
+    search = result(runtime, "grep", {"pattern": "FAKE_CREDENTIAL_FOR_TEST"})
+    assert search["matches"] == []
+    assert target.read_text(encoding="utf-8") == "DEMO_API_KEY=FAKE_CREDENTIAL_FOR_TEST"
+
+
+def test_empty_environment_example_is_usable_but_secret_values_are_blocked(tmp_path):
+    template = tmp_path / ".env.example"
+    template.write_text("DEEPSEEK_API_KEY=\nDEEPSEEK_MODEL=test\n", encoding="utf-8")
+    runtime = ToolRuntime(AgentConfig(tmp_path, permission_mode="full"))
+    assert result(runtime, "read_file", {"path": template.name})["ok"]
+    assert not result(runtime, "write_file", {"path": template.name, "content": "DEEPSEEK_API_KEY=FAKE_SECRET_ONLY\r\n"})["ok"]
+    template.write_text("DEEPSEEK_API_KEY=FAKE_SECRET_ONLY", encoding="utf-8")
+    assert not result(runtime, "read_file", {"path": template.name})["ok"]
+    assert result(runtime, "grep", {"pattern": "FAKE_SECRET_ONLY"})["matches"] == []
+
+
+def test_search_cannot_read_a_credential_through_an_in_workspace_file_alias(tmp_path):
+    secret = tmp_path / ".env"
+    secret.write_text("DEMO_API_KEY=FAKE_SECRET_ONLY", encoding="utf-8")
+    alias = tmp_path / "innocent.txt"
+    try:
+        alias.symlink_to(secret)
+    except OSError:
+        pytest.skip("File symlinks are unavailable")
+    runtime = ToolRuntime(make_config(tmp_path))
+    assert not result(runtime, "read_file", {"path": alias.name})["ok"]
+    assert result(runtime, "grep", {"pattern": "FAKE_SECRET_ONLY"})["matches"] == []
+
+
+def test_command_output_has_bounded_tails_and_reports_truncation(tmp_path):
+    import sys
+
+    runtime = ToolRuntime(AgentConfig(tmp_path, permission_mode="full"))
+    command = f'''"{sys.executable}" -c "import sys; sys.stdout.write('a'*1000000+'STDOUT_TAIL'); sys.stderr.write('b'*1000000+'STDERR_TAIL')"'''
+    response = result(runtime, "run_command", {"command": command})
+    assert response["ok"]
+    assert len(response["stdout"]) <= 20_000 and response["stdout"].endswith("STDOUT_TAIL")
+    assert len(response["stderr"]) <= 20_000 and response["stderr"].endswith("STDERR_TAIL")
+    assert response["output_truncated"] and response["stdout_truncated"] and response["stderr_truncated"]

@@ -45,3 +45,26 @@ def test_long_history_survives_save_reload_and_has_safe_bounded_context(tmp_path
     restored = store.load()["conversations"][0]["messages"]
     assert restored == chat["messages"] and len(restored) == 202
     assert model_history(restored)[0]["role"] == "user"
+
+
+def test_context_character_budget_removes_old_turns_without_mutating_saved_history():
+    messages = [{"role": "user", "content": "old question"}, {"role": "assistant", "content": "a" * 8000},
+                {"role": "user", "content": "latest question"}]
+    original = deepcopy(messages)
+    context = model_history(messages, max_chars=2000)
+    assert context == [{"role": "user", "content": "latest question"}]
+    assert messages == original
+
+
+def test_oversized_current_tool_group_is_shortened_but_call_pairs_stay_complete():
+    messages = tool_turn()
+    messages[1]["tool_calls"][0]["function"]["arguments"] = json.dumps({"content": "x" * 20000})
+    messages[2]["content"] = json.dumps({"content": "y" * 20000})
+    original = deepcopy(messages)
+    context = model_history(messages, max_chars=4000)
+    assert len(json.dumps(context, ensure_ascii=False)) <= 4000
+    assert context[0] == messages[0]
+    calls = [call["id"] for message in context for call in message.get("tool_calls", [])]
+    results = [message["tool_call_id"] for message in context if message.get("role") == "tool"]
+    assert calls == results == ["check"]
+    assert messages == original

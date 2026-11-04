@@ -139,8 +139,11 @@ def test_failed_transfer_recovers_via_new_tasks_without_erasing_evidence(help_ki
 
 @pytest.mark.parametrize("reason", ["hint", "demonstrate", "incorrect", "uncertain", "partial", "repeated"])
 def test_transfer_does_not_pass_without_sufficient_unassisted_evidence(reason):
-    second = "独立创建文本文件" if reason == "repeated" else "迁移到新场景"
-    notebook = plan(step("independent", "独立创建文本文件"), step("transfer", second))
+    notebook = plan(step("independent", "独立创建文本文件"), step("transfer", "迁移到新场景"))
+    if reason == "repeated":
+        legacy = notebook.export()
+        legacy["steps"][1]["task"] = legacy["steps"][0]["task"]
+        notebook = GuidanceNotebook(legacy)
     notebook.submit("第一题解释")
     review(notebook)
     notebook.action("next")
@@ -207,3 +210,58 @@ def test_concept_step_with_pending_answer_cannot_skip_review_using_next():
         notebook.action("next")
     assert notebook.public()["current"] == 0
     assert notebook.public()["pending_review"]
+
+
+@pytest.mark.parametrize("kind", ["independent", "transfer"])
+def test_appending_old_tasks_cannot_reset_their_help_history(kind):
+    notebook = plan(step("independent", "用文本文件表达我的想法"))
+    notebook.help("demonstrate")
+    notebook.submit("演示后的尝试")
+    review(notebook)
+    notebook.action("next")
+    before = notebook.export()
+    with pytest.raises(ValueError, match="新任务"):
+        notebook.plan({"append": True, "steps": [step(kind, "用 文本文件 表达我的想法")]})
+    assert notebook.export() == before
+
+
+def test_new_plan_rejects_repeated_independent_or_transfer_tasks():
+    notebook = GuidanceNotebook()
+    before = notebook.export()
+    with pytest.raises(ValueError, match="新任务"):
+        notebook.plan({"goal": "学会文件操作", "steps": [step("guided", "旧任务"), step("independent", "旧任务")]})
+    assert notebook.export() == before
+
+
+def test_old_duplicate_step_inherits_help_when_restored():
+    notebook = plan(step("independent", "旧任务"), step("independent", "暂时不同的任务"))
+    notebook.help("demonstrate")
+    notebook.submit("旧题的第一次尝试")
+    review(notebook)
+    notebook.action("next")
+    legacy = notebook.export()
+    legacy["steps"][1]["task"] = "旧任务"
+    notebook = GuidanceNotebook(legacy)
+    notebook.submit("旧题重新提交")
+    outcome = review(notebook)
+    assert outcome["feedback"]["practice"]["answer_viewed"]
+    assert not outcome["feedback"]["fresh_task"]
+    assert notebook.public()["independent_successes"] == 0
+
+
+def test_mastery_evidence_survives_more_than_two_hundred_later_attempts():
+    notebook = plan(step("independent", "独立题"), step("transfer", "迁移题"), step("guided", "后续练习"))
+    notebook.submit("独立完成")
+    review(notebook)
+    notebook.action("next")
+    notebook.submit("迁移完成")
+    review(notebook)
+    notebook.action("next")
+    for _ in range(201):
+        notebook.submit("补充后续尝试")
+        review(notebook, correctness="incorrect")
+    restored = GuidanceNotebook(notebook.export())
+    assert len(restored.export()["attempts"]) == 203
+    assert restored.public()["mastery_verified"]
+    assert restored.public()["independent_successes"] == 1
+    assert len(restored.context()["recent_attempts"]) == 5

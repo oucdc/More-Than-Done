@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 from typing import Any
 import uuid
 
@@ -33,6 +35,13 @@ class ConversationStore:
 
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path is not None else PROJECT_ROOT / "data" / "conversations.json"
+        self._cache_lock = threading.RLock()
+        self._cache_signature: tuple[int, int, int, int] | None = None
+        self._cache_document: dict[str, Any] | None = None
+
+    def _file_signature(self) -> tuple[int, int, int, int]:
+        stat = self.path.stat()
+        return stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_ino
 
     @staticmethod
     def empty() -> dict[str, Any]:
@@ -45,10 +54,19 @@ class ConversationStore:
         }
 
     def load(self) -> dict[str, Any]:
-        if not self.path.exists():
-            return self.empty()
+        with self._cache_lock:
+            return self._load_locked()
+
+    def _load_locked(self) -> dict[str, Any]:
         try:
+            signature = self._file_signature()
+            if signature == self._cache_signature and self._cache_document is not None:
+                return deepcopy(self._cache_document)
             document = json.loads(self.path.read_text(encoding="utf-8-sig"))
+        except FileNotFoundError:
+            self._cache_signature = None
+            self._cache_document = None
+            return self.empty()
         except UnicodeDecodeError as exc:
             raise ConversationStoreError("Agent 对话记录不是 UTF-8 文本。原文件已保留。") from exc
         except json.JSONDecodeError as exc:
@@ -57,7 +75,16 @@ class ConversationStore:
             ) from exc
         except OSError as exc:
             raise ConversationStoreError("无法读取 Agent 对话记录。原文件已保留。") from exc
-        return self.normalize(document)
+        normalized = self.normalize(document)
+        # An external atomic replacement during this read must be loaded again
+        # on the next request, rather than cached under the newer file's stamp.
+        try:
+            unchanged = self._file_signature() == signature
+        except OSError:
+            unchanged = False
+        self._cache_signature = signature if unchanged else None
+        self._cache_document = deepcopy(normalized) if unchanged else None
+        return normalized
 
     def normalize(self, document: object) -> dict[str, Any]:
         if not isinstance(document, dict):
@@ -131,7 +158,7 @@ class ConversationStore:
                 "created_at": str(raw.get("created_at") or _now()),
                 "updated_at": str(raw.get("updated_at") or _now()),
                 "messages": [item for item in messages if isinstance(item, dict)],
-                "events": [item for item in events if isinstance(item, dict)][-500:],
+                "events": [item for item in events if isinstance(item, dict)],
                 "lesson": lesson,
             })
             conversation_ids.add(conversation_id)
@@ -160,6 +187,10 @@ class ConversationStore:
         }
 
     def save(self, document: dict[str, Any]) -> None:
+        with self._cache_lock:
+            self._save_locked(document)
+
+    def _save_locked(self, document: dict[str, Any]) -> None:
         encoded = (json.dumps(document, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         temporary_path: Path | None = None
         try:
@@ -176,6 +207,8 @@ class ConversationStore:
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
             os.replace(temporary_path, self.path)
+            self._cache_signature = None
+            self._cache_document = None
             try:
                 os.chmod(self.path, 0o600)
             except OSError:

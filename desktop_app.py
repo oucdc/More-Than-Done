@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import threading
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ import webview
 from agent.llm_client import LLMClient
 from agent.agent_config import AgentConfigStore
 from agent.conversations import ConversationStore
+from agent.data_lock import DataDirectoryLockError
 from agent.desktop_runtime import ensure_webview2
 from agent.tutor_agent import TutorAgent
 from config import APP_VERSION, DEFAULT_BASE_URL, DEFAULT_MODEL, Settings
@@ -73,11 +75,15 @@ def main() -> int:
         return 1
 
     data_root = args.data_dir.resolve() if args.data_dir else None
-    server = MoreThanDoneHTTPServer(
-        ("127.0.0.1", 0), _make_tutor(),
-        config_store=AgentConfigStore(data_root / "agent_config.json") if data_root else None,
-        conversation_store=ConversationStore(data_root / "conversations.json") if data_root else None,
-    )
+    try:
+        server = MoreThanDoneHTTPServer(
+            ("127.0.0.1", 0), _make_tutor(),
+            config_store=AgentConfigStore(data_root / "agent_config.json") if data_root else None,
+            conversation_store=ConversationStore(data_root / "conversations.json") if data_root else None,
+        )
+    except DataDirectoryLockError as exc:
+        ctypes.windll.user32.MessageBoxW(None, str(exc), "More Than Done", 0x40)
+        return 1
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     port = server.server_address[1]

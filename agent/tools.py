@@ -26,10 +26,69 @@ class ToolPermissionError(RuntimeError):
 ApprovalFn = Callable[[str, dict[str, Any]], bool]
 
 
-def _decode_output(value: bytes | str | None) -> str:
-    if isinstance(value, str):
-        return value
-    return (value or b"").decode("utf-8", errors="replace")
+SENSITIVE_NAMES = {
+    ".env", ".envrc", "agent_config.json", ".npmrc", ".pypirc", ".netrc", ".git-credentials",
+    "credentials", "credentials.json", "secrets.json", "secrets.yaml", "secrets.yml", "secrets.toml", "id_rsa", "id_dsa",
+    "id_ecdsa", "id_ed25519",
+}
+SENSITIVE_DIRECTORIES = {".aws", ".ssh", ".azure", ".kube"}
+SECRET_ASSIGNMENT = re.compile(
+    r"^[ \t]*(?:export[ \t]+)?[\w.-]*(?:API_KEY|ACCESS_KEY|TOKEN|SECRET|PASSWORD|PRIVATE_KEY)[\w.-]*[ \t]*=[ \t]*([^\r\n]*)\r?$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _template_contains_credentials(content: str) -> bool:
+    for value in SECRET_ASSIGNMENT.findall(content):
+        value = value.strip().strip("\"'")
+        if value and value.casefold() not in {"your_api_key_here", "replace_me", "changeme", "..."}:
+            return True
+    return False
+
+
+def is_sensitive_path(path: Path) -> bool:
+    """Protect credential locations, including the real target of file aliases."""
+    for candidate in (path, path.resolve()):
+        name = candidate.name.casefold()
+        if any(part.casefold() in SENSITIVE_DIRECTORIES for part in candidate.parts):
+            return True
+        if name in SENSITIVE_NAMES or candidate.suffix.casefold() in {".key", ".pem", ".p12", ".pfx"}:
+            return True
+        if name.startswith(".env."):
+            if name != ".env.example":
+                return True
+            try:
+                if candidate.is_file() and (
+                    candidate.stat().st_size > 100_000
+                    or _template_contains_credentials(candidate.read_text(encoding="utf-8-sig"))
+                ):
+                    return True
+            except (OSError, UnicodeError):
+                return True
+    return False
+
+
+class _OutputTail:
+    """Keep a bounded UTF-8 byte tail while draining a process pipe."""
+
+    LIMIT = 80_000
+
+    def __init__(self) -> None:
+        self.data = bytearray()
+        self.total = 0
+        self.lock = threading.Lock()
+
+    def append(self, chunk: bytes) -> None:
+        with self.lock:
+            self.total += len(chunk)
+            self.data.extend(chunk)
+            if len(self.data) > self.LIMIT:
+                del self.data[:-self.LIMIT]
+
+    def public(self) -> tuple[str, bool]:
+        with self.lock:
+            text = bytes(self.data).decode("utf-8", errors="replace")
+            return text[-20_000:], self.total > self.LIMIT or len(text) > 20_000
 
 
 def run_local_command(command: str, cwd: Path, env: dict[str, str], timeout: int, cancel_event: threading.Event | None = None) -> dict[str, Any]:
@@ -45,16 +104,24 @@ def run_local_command(command: str, cwd: Path, env: dict[str, str], timeout: int
     started = time.monotonic()
     process = subprocess.Popen(invocation, shell=False, cwd=str(cwd), env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options)
-    timed_out = cancelled = False
-    while True:
+    tails = [_OutputTail(), _OutputTail()]
+
+    def drain(pipe, tail):
         try:
-            stdout, stderr = process.communicate(timeout=.15)
-            break
-        except subprocess.TimeoutExpired:
-            cancelled = bool(cancel_event and cancel_event.is_set())
-            timed_out = not cancelled and time.monotonic() - started >= timeout
-            if not (cancelled or timed_out):
-                continue
+            while chunk := pipe.read1(8192):
+                tail.append(chunk)
+        finally:
+            pipe.close()
+
+    readers = [threading.Thread(target=drain, args=(pipe, tail), daemon=True)
+               for pipe, tail in zip((process.stdout, process.stderr), tails)]
+    for reader in readers:
+        reader.start()
+    timed_out = cancelled = False
+    while process.poll() is None or any(reader.is_alive() for reader in readers):
+        cancelled = bool(cancel_event and cancel_event.is_set())
+        timed_out = not cancelled and time.monotonic() - started >= timeout
+        if cancelled or timed_out:
             if os.name == "nt":
                 taskkill = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "taskkill.exe"
                 try:
@@ -68,15 +135,21 @@ def run_local_command(command: str, cwd: Path, env: dict[str, str], timeout: int
                 except ProcessLookupError:
                     pass
             try:
-                stdout, stderr = process.communicate(timeout=5)
-            except subprocess.TimeoutExpired as exc:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
                 process.kill()
-                stdout, stderr = exc.stdout, exc.stderr
             break
+        time.sleep(.05)
+    for reader in readers:
+        reader.join(timeout=1)
+    stdout, stdout_truncated = tails[0].public()
+    stderr, stderr_truncated = tails[1].public()
     return {"returncode": process.returncode if not (timed_out or cancelled) else None,
             "timed_out": timed_out, "cancelled": cancelled,
             "duration_ms": round((time.monotonic() - started) * 1000),
-            "stdout": _decode_output(stdout), "stderr": _decode_output(stderr)}
+            "stdout": stdout, "stderr": stderr,
+            "stdout_truncated": stdout_truncated, "stderr_truncated": stderr_truncated,
+            "output_truncated": stdout_truncated or stderr_truncated}
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
@@ -172,7 +245,7 @@ class ToolRuntime:
 
     MAX_OUTPUT = 20_000
     SKIP_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "node_modules"}
-    SENSITIVE_NAMES = {".env", "agent_config.json"}
+    SENSITIVE_NAMES = SENSITIVE_NAMES
 
     def __init__(
         self,
@@ -306,8 +379,8 @@ class ToolRuntime:
                 break
         return {"path": self._relative(path), "entries": entries, "truncated": len(entries) >= 200}
 
-    def _forbid_sensitive(self, path: Path) -> None:
-        if path.name.casefold() in self.SENSITIVE_NAMES:
+    def _forbid_sensitive(self, path: Path, content: str | None = None) -> None:
+        if is_sensitive_path(path) or (path.name.casefold() == ".env.example" and content is not None and _template_contains_credentials(content)):
             raise ToolPermissionError("该文件包含本地凭据，工具不能读取或写入。")
 
     def _read_file(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -387,6 +460,7 @@ class ToolRuntime:
         content = args.get("content")
         if not isinstance(content, str):
             raise ToolPermissionError("content 必须是文本。")
+        self._forbid_sensitive(path, content)
         encoded = content.encode("utf-8")
         if len(encoded) > 2_000_000:
             raise ToolPermissionError("写入内容超过 2MB 限制。")
@@ -435,15 +509,15 @@ class ToolRuntime:
 
         results: list[dict[str, Any]] = []
         for current_root, dirnames, filenames in os.walk(base):
-            dirnames[:] = [name for name in dirnames if name not in self.SKIP_DIRS]
+            dirnames[:] = [name for name in dirnames if name not in self.SKIP_DIRS and name.casefold() not in SENSITIVE_DIRECTORIES]
             for filename in filenames:
                 if not fnmatch(filename, include):
-                    continue
-                if filename.casefold() in self.SENSITIVE_NAMES:
                     continue
                 path = Path(current_root) / filename
                 try:
                     resolved = path.resolve()
+                    if is_sensitive_path(path):
+                        continue
                     # Do not follow a file symlink outside an approved search root.
                     if not resolved.is_relative_to(base):
                         continue

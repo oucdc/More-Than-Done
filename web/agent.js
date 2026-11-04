@@ -52,14 +52,20 @@ function toast(message, isError = false) {
   window.setTimeout(() => node.remove(), 4200);
 }
 
+let csrfToken = "";
 async function api(path, options = {}) {
+  if (options.method && options.method !== "GET" && !csrfToken) {
+    const security = await fetch("/api/security").then(response => response.json());
+    csrfToken = security.csrf_token;
+  }
   const response = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: { "Content-Type": "application/json", "X-MTD-CSRF": csrfToken, ...(options.headers || {}) },
   });
   let body = {};
   try {
     body = await response.json();
+    if (body.csrf_token) csrfToken = body.csrf_token;
   } catch {
     body = {};
   }

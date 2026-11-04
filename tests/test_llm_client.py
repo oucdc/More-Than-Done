@@ -175,8 +175,8 @@ def test_complete_maps_provider_status_errors_safely(
 
 def test_rate_limit_retries_once_then_returns_success(monkeypatch):
     sleeps = []
-    monkeypatch.setattr("agent.llm_client.time.sleep", sleeps.append)
     llm, completions = make_client(errors=[_status_error(RateLimitError, 429)])
+    monkeypatch.setattr(llm, "_wait_retry", lambda seconds, cancel_event: sleeps.append(seconds))
 
     result = llm.complete([{"role": "user", "content": "Hello"}])
 
@@ -197,11 +197,11 @@ def test_server_error_retries_once_then_returns_success(monkeypatch):
 
 def test_timeout_retries_once_then_returns_success(monkeypatch):
     sleeps = []
-    monkeypatch.setattr("agent.llm_client.time.sleep", sleeps.append)
     timeout = APITimeoutError(
         httpx.Request("POST", "https://api.deepseek.com/chat/completions")
     )
     llm, completions = make_client(errors=[timeout])
+    monkeypatch.setattr(llm, "_wait_retry", lambda seconds, cancel_event: sleeps.append(seconds))
 
     result = llm.complete([{"role": "user", "content": "Hello"}])
 
@@ -290,4 +290,138 @@ def test_complete_tool_call_rejects_empty_tools():
 
     with pytest.raises(ValueError, match="tool definition"):
         llm.complete_tool_call([{"role": "user", "content": "x"}], tools=[])
+
+
+@pytest.mark.parametrize("cancel_by_method", [False, True])
+def test_cancel_releases_a_blocked_stream_and_closes_it(cancel_by_method):
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    cancelled = threading.Event()
+
+    class BlockingStream:
+        def __iter__(self):
+            entered.set()
+            release.wait(5)
+            yield SimpleNamespace(choices=[])
+
+        def close(self):
+            closed.set()
+            release.set()
+
+    stream = BlockingStream()
+    sdk = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: stream)))
+    llm = LLMClient(Settings(api_key="test-only"), client=sdk)
+    errors = []
+
+    def receive():
+        try:
+            llm.stream_tool_call([{"role": "user", "content": "test"}], tools=[{}],
+                                 on_delta=lambda text: None, cancel_event=cancelled)
+        except Exception as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=receive)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        llm.cancel() if cancel_by_method else cancelled.set()
+        worker.join(1)
+        assert not worker.is_alive()
+        assert len(errors) == 1 and isinstance(errors[0], InterruptedError)
+        assert closed.wait(1)
+    finally:
+        release.set()
+        worker.join(2)
+
+
+def test_cancel_during_request_creation_releases_caller_and_closes_late_response():
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    cancelled = threading.Event()
+
+    def create(**kwargs):
+        entered.set()
+        release.wait(5)
+        return SimpleNamespace(close=closed.set)
+
+    llm = LLMClient(Settings(api_key="test-only"), client=SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    errors = []
+
+    def receive():
+        try:
+            llm.stream_tool_call([{"role": "user", "content": "test"}], tools=[{}],
+                                 on_delta=lambda text: None, cancel_event=cancelled)
+        except Exception as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=receive)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        cancelled.set()
+        worker.join(1)
+        assert not worker.is_alive()
+        assert len(errors) == 1 and isinstance(errors[0], InterruptedError)
+        release.set()
+        assert closed.wait(1)
+    finally:
+        release.set()
+        worker.join(2)
+
+
+def test_cancel_after_failed_request_prevents_retry():
+    import threading
+
+    cancelled = threading.Event()
+    requests = []
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        cancelled.set()
+        raise APITimeoutError(httpx.Request("POST", "https://example.invalid"))
+
+    llm = LLMClient(Settings(api_key="test-only"), client=SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    with pytest.raises(InterruptedError):
+        llm.stream_tool_call([{"role": "user", "content": "test"}], tools=[{}],
+                             on_delta=lambda text: None, cancel_event=cancelled)
+    assert len(requests) == 1
+
+
+def test_cancel_interrupts_retry_backoff_without_another_request():
+    import threading
+
+    entered = threading.Event()
+    requests = []
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        entered.set()
+        raise APITimeoutError(httpx.Request("POST", "https://example.invalid"))
+
+    llm = LLMClient(Settings(api_key="test-only"), client=SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+    errors = []
+
+    def receive():
+        try:
+            llm.complete([{"role": "user", "content": "test"}])
+        except Exception as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=receive)
+    worker.start()
+    assert entered.wait(2)
+    llm.cancel()
+    worker.join(1)
+    assert not worker.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], InterruptedError)
+    assert len(requests) == 1
 

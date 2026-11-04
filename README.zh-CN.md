@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**0.1.6 版 · Windows 桌面学习工作台**
+**0.2.0 版 · Windows 桌面学习工作台**
 
 More Than Done 是一款教育 AI Agent，帮助你理解任务、亲手尝试、获得反馈，并逐步独立完成。它把本地项目、流式聊天和由程序记录进度的学习计划放在同一个工作台中。
 
@@ -33,6 +33,12 @@ More Than Done 是一款教育 AI Agent，帮助你理解任务、亲手尝试�
 项目/对话归档仍保存在 EXE 同目录的 `data/conversations.json`，只标记归档，不移动、压缩或复制工作区文件夹；原文件夹仍在你选择的位置。点击侧栏“已归档”可查看并恢复。源码运行时位于源码目录的 `data/conversations.json`；用 `--data-dir` 启动时位于指定目录。归档不等于备份，备份时请同时保存 `data` 和工作区文件。`data` 可能含密钥和私人对话，不能随发行包分享。
 
 ## 从源码运行
+
+0.2.0 增加了作品证据与复验功能。展开输入框旁的“作品与预测”，可以附上最多 3 个工作区内的 UTF-8 文本文件（每份最多 20,000 字符），填写操作结果与自己的解释，再提交尝试。提交时保存文件快照、指纹和检查结果，旧证据可在学习导航中回看。
+
+需要先预测结果时，填写预测与信心后点击“先记录预测”，操作后再补充实际观察。侧栏“能力证据册”汇集各会话的作品和验证结果，可导出 Markdown。首次掌握后次日出现新情境挑战，通过延时复验后，下次安排在 7 日后。
+
+“创建练习副本”把选定文本放入独立项目，副本保存在数据目录的 `practice` 文件夹。可查看差异并还原选定的副本文件。更早的聊天可通过“加载更早的学习记录”查看。
 
 桌面窗口和原生文件夹选择器面向 Windows，开发与本地测试已在 Python 3.12 验证。请使用已安装的 Python 3.12；如果 `python` 打开安装提示，请改用解释器完整路径或可用的 Python 启动器。
 
@@ -79,7 +85,7 @@ Node.js 只用于 JavaScript 语法检查。原生布局验收依赖 Edge WebVie
 构建 Windows EXE 并整理便携发行包：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.6-windows-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.2.0-windows-x64
 .\.venv\Scripts\python.exe -m scripts.package_release
 ```
 

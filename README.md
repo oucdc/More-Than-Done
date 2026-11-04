@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**Version 0.1.6 · Windows desktop learning workspace**
+**Version 0.2.0 · Windows desktop learning workspace**
 
 More Than Done is an educational AI agent that helps you understand a task, try it yourself, receive feedback, and build the ability to work independently. It combines a local project workspace, streaming chat, and a learning plan whose progress is recorded by the application.
 
@@ -33,6 +33,12 @@ First-time runtime installation needs internet access; this ZIP does not bundle 
 Archived projects and conversations stay in `data/conversations.json` beside the EXE, marked as archived. Archiving does not move, compress, or copy the workspace folder; its files remain at the original location. Use **已归档** in the sidebar to restore records. Source runs use the source directory; `--data-dir` overrides the data directory. Archiving is not a backup: back up both `data` and workspace files. Never share personal `data` with a release because it can contain keys and private conversations.
 
 ## Run from source
+
+Version 0.2.0 adds artifact evidence and delayed challenges. Expand the artifact/prediction form to attach up to three UTF-8 workspace text files, each containing up to 20,000 characters. Submitting an attempt stores an immutable text snapshot, fingerprint, checks, and your explanation. Evidence cards remain available in the learning panel.
+
+Record a prediction before performing a task, then add the observed result. The ability portfolio collects evidence across conversations and exports Markdown. A first mastery pass schedules a challenge for the following day. A successful delayed challenge schedules the next check seven days later.
+
+Practice copies place selected text files in a separate project under the data directory's `practice` folder. You can inspect differences and restore those copied files. Earlier chat events are available through the history-loading button.
 
 The desktop app and its native folder picker target Windows. Development and local tests have been verified with Python 3.12. Use an installed Python 3.12 interpreter; if `python` opens an installation prompt, use its full executable path or a working Python launcher.
 
@@ -79,7 +85,7 @@ Node.js is only needed for the JavaScript syntax check. Native layout checks use
 Build the Windows executable and assemble a portable release package:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.1.6-windows-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.2.0-windows-x64
 .\.venv\Scripts\python.exe -m scripts.package_release
 ```
 

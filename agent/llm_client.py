@@ -2,6 +2,8 @@
 
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
+import queue
+import threading
 from types import SimpleNamespace
 import time
 from typing import Any
@@ -40,6 +42,102 @@ class LLMClient:
             timeout=30.0,
             max_retries=0,
         )
+        self._cancelled = threading.Event()
+        self._response_lock = threading.Lock()
+        self._active_stream = None
+
+    @staticmethod
+    def _close_response(response) -> None:
+        close = getattr(response, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
+    def cancel(self) -> None:
+        """Cancel this client instance and close active network resources."""
+        with self._response_lock:
+            if self._cancelled.is_set():
+                return
+            self._cancelled.set()
+            response = self._active_stream
+            self._active_stream = None
+        # Some transports wait for their reader when closing. Keep cancellation
+        # responsive while those resources are being released in the background.
+        def close():
+            self._close_response(response)
+            self._close_response(self._client)
+        threading.Thread(target=close, name="more-than-done-close-model", daemon=True).start()
+
+    def _check_cancelled(self, cancel_event=None) -> None:
+        if self._cancelled.is_set() or (cancel_event is not None and cancel_event.is_set()):
+            if not self._cancelled.is_set():
+                self.cancel()
+            raise InterruptedError("已停止接收模型回复。")
+
+    def _call_cancellable(self, operation, cancel_event=None):
+        """Release the caller even if the transport is blocked creating a response."""
+        self._check_cancelled(cancel_event)
+        done = threading.Event()
+        result = []
+
+        def call():
+            try:
+                response = operation()
+                if self._cancelled.is_set() or (cancel_event is not None and cancel_event.is_set()):
+                    self._close_response(response)
+                result.append((True, response))
+            except Exception as error:
+                result.append((False, error))
+            finally:
+                done.set()
+
+        threading.Thread(target=call, name="more-than-done-model-request", daemon=True).start()
+        while not done.wait(.05):
+            self._check_cancelled(cancel_event)
+        self._check_cancelled(cancel_event)
+        success, value = result[0]
+        if not success:
+            raise value
+        return value
+
+    def _stream_chunks(self, stream, cancel_event):
+        chunks = queue.Queue(maxsize=8)
+        finished = object()
+
+        def deliver(item):
+            while not self._cancelled.is_set():
+                try:
+                    chunks.put(item, timeout=.05)
+                    return
+                except queue.Full:
+                    continue
+
+        def read():
+            try:
+                for chunk in stream:
+                    if self._cancelled.is_set():
+                        break
+                    deliver((True, chunk))
+            except Exception as error:
+                deliver((False, error))
+            finally:
+                deliver((True, finished))
+
+        threading.Thread(target=read, name="more-than-done-model-stream", daemon=True).start()
+        while True:
+            self._check_cancelled(cancel_event)
+            try:
+                success, value = chunks.get(timeout=.05)
+            except queue.Empty:
+                continue
+            self._check_cancelled(cancel_event)
+            if not success:
+                raise value
+            if value is finished:
+                return
+            yield value
 
     def complete(
         self,
@@ -118,10 +216,12 @@ class LLMClient:
         parts: list[str] = []
         calls: dict[int, dict[str, Any]] = {}
         finish = None
-        stream = self._create_with_retry(request)
+        stream = self._create_with_retry(request, cancel_event=cancel_event)
+        with self._response_lock:
+            self._active_stream = stream
         try:
             with self._translate_sdk_errors():
-                for chunk in stream:
+                for chunk in self._stream_chunks(stream, cancel_event):
                     if cancel_event is not None and cancel_event.is_set():
                         raise InterruptedError("已停止接收模型回复。")
                     if not chunk.choices:
@@ -146,8 +246,13 @@ class LLMClient:
                     if choice.finish_reason is not None:
                         finish = choice.finish_reason
         finally:
-            if hasattr(stream, "close"):
-                stream.close()
+            with self._response_lock:
+                if self._active_stream is stream:
+                    self._active_stream = None
+            if self._cancelled.is_set():
+                threading.Thread(target=self._close_response, args=(stream,), daemon=True).start()
+            else:
+                self._close_response(stream)
         if finish == "length":
             raise LLMInvalidResponseError("模型回复超过输出长度限制，已保留收到的内容，请重试。")
         if finish not in {"stop", "tool_calls"}:
@@ -198,13 +303,22 @@ class LLMClient:
             raise LLMInvalidResponseError("模型返回了空文本，请重试。")
         return content.strip()
 
-    def _create_with_retry(self, request: dict[str, Any]) -> Any:
+    def _wait_retry(self, seconds, cancel_event):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self._check_cancelled(cancel_event)
+            self._cancelled.wait(min(.05, max(0, deadline - time.monotonic())))
+        self._check_cancelled(cancel_event)
+
+    def _create_with_retry(self, request: dict[str, Any], *, cancel_event=None) -> Any:
         for attempt in range(2):
+            self._check_cancelled(cancel_event)
             try:
-                return self._create_completion(request)
+                return self._call_cancellable(lambda: self._create_completion(request), cancel_event)
             except (LLMRateLimitError, LLMTimeoutError, LLMConnectionError, LLMProviderError) as exc:
+                self._check_cancelled(cancel_event)
                 if attempt == 0 and self._is_retryable(exc):
-                    time.sleep(1.0)
+                    self._wait_retry(1.0, cancel_event)
                     continue
                 raise
         raise LLMProviderError("DeepSeek API 调用失败，请稍后再试。")

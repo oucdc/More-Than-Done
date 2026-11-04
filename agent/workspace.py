@@ -12,7 +12,9 @@ from agent.agent_config import AgentConfigStore
 from agent.command_environment import describe_environment
 from agent.conversations import ConversationStore, ConversationStoreError
 from agent.local_agent import AgentSession
+from agent.artifacts import capture_artifacts, create_practice, discard_practice, practice_state
 from config import PROJECT_ROOT
+from learning.portfolio import build_portfolio
 
 
 MODEL_OPTIONS = [
@@ -122,6 +124,9 @@ class WorkspaceManager:
             if conversation["project_id"] == project["id"] and not conversation.get("archived", False)
         ]
         conversation = self._active_conversation_locked(document)
+        if conversation and self._loaded_conversation_id not in (None, conversation["id"]):
+            self._assert_idle_locked()
+            self._persist_locked(document)
         if conversation is None or conversation["project_id"] != project["id"] or conversation.get("archived", False):
             if project_conversations:
                 conversation = max(project_conversations, key=lambda item: item["updated_at"])
@@ -138,8 +143,10 @@ class WorkspaceManager:
         return document
 
     def _persist_locked(self, document: dict[str, Any]) -> None:
-        conversation = self._active_conversation_locked(document)
-        project = self._active_project_locked(document)
+        conversation = next((item for item in document["conversations"]
+                             if item["id"] == self._loaded_conversation_id), None)
+        project = next((item for item in document["projects"]
+                        if conversation and item["id"] == conversation["project_id"]), None)
         if conversation is None or project is None:
             return
         messages, events = self.session.export_conversation()
@@ -157,8 +164,6 @@ class WorkspaceManager:
                         conversation["title"] = title[:48]
                     break
         conversation["updated_at"] = _now()
-        document["active_project_id"] = project["id"]
-        document["active_conversation_id"] = conversation["id"]
         self.conversation_store.save(document)
 
     def _state_locked(self) -> dict[str, Any]:
@@ -537,9 +542,101 @@ class WorkspaceManager:
             self.session.teaching_action(action)
             return self._state_locked()
 
-    def submit_attempt(self, answer: object, *, conversation_id: object = None) -> dict[str, Any]:
+    def submit_attempt(self, answer: object, *, conversation_id: object = None,
+                       paths=None, prediction=None, confidence=None, observed_result=None) -> dict[str, Any]:
+        with self.lock:
+            self._require_project_locked()
+            self._assert_idle_locked()
+            self._check_target_locked(conversation_id)
+            artifacts = capture_artifacts(self.session.load_config(), paths)
+            self.session.send(answer, intent="attempt", artifacts=artifacts,
+                              prediction=prediction, confidence=confidence,
+                              observed_result=observed_result)
+            return self._state_locked()
+
+    def portfolio(self) -> dict[str, Any]:
+        with self.lock:
+            document = self._ensure_locked()
+            return build_portfolio(document)
+
+    def record_prediction(self, prediction, confidence=None, *, conversation_id=None):
+        with self.lock, self.session.lock:
+            self._require_project_locked()
+            self._assert_idle_locked()
+            self._check_target_locked(conversation_id)
+            previous = self.session.lesson.export()
+            try:
+                self.session.lesson.record_prediction(prediction, confidence)
+                self.session.checkpoint()
+            except Exception:
+                self.session.lesson.restore(previous)
+                raise
+            self.session.notify_state_change()
+            return self._state_locked()
+
+    def start_challenge(self, skill_id: object) -> dict[str, Any]:
+        with self.lock:
+            document = self._require_project_locked()
+            self._assert_idle_locked()
+            skills = build_portfolio(document)["skills"]
+            skill = next((item for item in skills if item["skill_id"] == skill_id), None)
+            if skill is None or not skill["challenge_due"]:
+                raise ValueError("这项能力尚未到复验时间。")
+            # Validate credentials before creating any new conversation.
+            if not self.session.load_config().key_configured:
+                raise ValueError("请先保存 API Key。")
+            source = next((chat for chat in document["conversations"]
+                           if chat["id"] == skill["source_conversation_id"]), None)
+            if source is None:
+                raise ValueError("原学习记录已不可用。")
+            self.new_conversation(source["project_id"])
+            self.session.lesson.prepare_challenge(skill["goal"], skill_id, skill["prior_tasks"],
+                                                  available_after=skill["due_at"])
+            self.session.send("开始隔日独立挑战。请依据当前教学记录，用 plan_learning 安排一道全新的 independent 练习和一道全新的 transfer 迁移题。先让我独立尝试，不提供答案。")
+            return self._state_locked()
+
+    def history(self, conversation_id: object, before: int, limit: int = 100) -> dict[str, Any]:
+        with self.lock:
+            self._ensure_locked()
+            self._check_target_locked(conversation_id)
+            if type(before) is not int or before < 1 or type(limit) is not int:
+                raise ValueError("历史记录游标无效。")
+            with self.session.lock:
+                events = [dict(item) for item in self.session.events if item["id"] < before]
+            page = events[-max(1, min(limit, 100)):]
+            return {"conversation_id": conversation_id, "events": page,
+                    "before": page[0]["id"] if page else before,
+                    "has_more": len(events) > len(page)}
+
+    def make_practice_copy(self, paths, *, conversation_id=None) -> dict[str, Any]:
+        with self.lock:
+            self._require_project_locked()
+            self._assert_idle_locked()
+            self._check_target_locked(conversation_id)
+            workspace = create_practice(self.session.load_config(), paths, self.config_store.path.parent)
+            try:
+                return self.create_project({"name": "练习副本 · " + workspace.parent.name[:6],
+                                            "workspace": str(workspace)})
+            except Exception as exc:
+                try:
+                    saved = self.conversation_store.load()
+                    if not any(item["workspace"] == str(workspace) for item in saved["projects"]):
+                        discard_practice(workspace, self.config_store.path.parent)
+                except (OSError, ConversationStoreError) as cleanup:
+                    exc.add_note(f"练习临时目录未清理，请保留以便恢复：{cleanup}")
+                raise
+
+    def practice(self, *, reset=False, conversation_id=None) -> dict[str, Any]:
         with self.lock:
             self._require_project_locked()
             self._check_target_locked(conversation_id)
-            self.session.send(answer, intent="attempt")
-            return self._state_locked()
+            if reset:
+                self._assert_idle_locked()
+            state = practice_state(self.session.load_config().workspace,
+                                   self.config_store.path.parent, reset=reset)
+            if reset:
+                if not state["available"]:
+                    raise ValueError("当前项目不是练习副本。")
+                self.session.notify_state_change()
+                return self._state_locked()
+            return state

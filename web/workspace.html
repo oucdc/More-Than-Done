@@ -40,6 +40,7 @@
         </div>
 
         <div class="sidebar-footer">
+          <button class="settings-button" id="open-portfolio" type="button"><span aria-hidden="true">◇</span><span>我的能力证据册</span></button>
           <button class="settings-button" id="open-archived" type="button"><span aria-hidden="true">▣</span><span>已归档</span><span id="archived-count"></span></button>
           <button class="settings-button" id="open-settings" type="button">
             <span aria-hidden="true">⚙</span>
@@ -98,6 +99,7 @@
                 <button type="button" data-prompt="我想学一个新技能，请先问我想达到的目标和已有基础，再安排一个能在本机动手的小任务。">开始一项新学习</button>
               </div>
             </div>
+            <button class="history-button" id="load-history" type="button" hidden>加载更早的学习记录</button>
             <div class="messages" id="messages" role="log" aria-live="polite"></div>
 
             <div class="approval" id="approval" hidden>
@@ -121,6 +123,20 @@
         <div class="composer-wrap">
           <div class="jump-latest-wrap"><button class="jump-latest" id="jump-latest" type="button" hidden>有新内容 · 回到底部 ↓</button></div>
           <form class="composer" id="chat-form">
+            <details class="attempt-evidence" id="attempt-evidence">
+              <summary>作品与观察（提交尝试时附上）</summary>
+              <div class="attempt-evidence-fields">
+                <label class="field"><span>作品文件 · 最多 3 个，每行一个工作区内相对路径</span><textarea id="evidence-paths" rows="2" placeholder="例如 src/main.py" spellcheck="false"></textarea></label>
+                <div class="prediction-grid">
+                  <label class="field"><span>操作前的预测（可选）</span><textarea id="attempt-prediction" rows="2" maxlength="2000" placeholder="你预计会出现什么结果？可在动手前先记录"></textarea></label>
+                  <label class="field"><span>信心程度 0–100（可选）</span><input id="attempt-confidence" type="number" min="0" max="100" step="1" placeholder="例如 70"></label>
+                </div>
+                <div class="practice-actions"><button class="button ghost" id="record-prediction" type="button">先记录预测</button><span class="evidence-meta" id="prediction-status"></span></div>
+                <label class="field"><span>观察到的实际结果（可选）</span><textarea id="attempt-observed-result" rows="2" maxlength="2000" placeholder="真实输出、变化或与你的预测不同的地方"></textarea></label>
+                <div class="practice-actions"><button class="button ghost" id="create-practice-copy" type="button">用这些文件创建练习副本</button><button class="button ghost" id="view-practice-diff" type="button">查看副本差异</button></div>
+                <p class="muted-note">提交时保存所选文本文件的快照，导师会结合你的思路审阅。</p>
+              </div>
+            </details>
             <textarea id="message" rows="3" maxlength="20000" aria-label="学习目标、问题或你的尝试" placeholder="你想学会什么？也可以写下你的思路、操作结果或卡住的地方…"></textarea>
             <div class="composer-bottom">
               <div class="composer-hints">
@@ -172,6 +188,7 @@
             </section>
             <section class="learning-feedback" id="learning-feedback" hidden></section>
             <section class="lesson-summary" id="lesson-summary"></section>
+            <section class="evidence-cards" id="evidence-cards" aria-label="作品与尝试证据" hidden></section>
           </div>
           <footer class="lesson-footnote">导师审阅会有误差；不会把听过讲解或看过演示直接记成独立掌握。</footer>
         </aside>
@@ -310,6 +327,23 @@
         <p class="delete-conversation-note">将删除这段对话的消息和学习记录，删除后无法恢复。工作区文件会保留。</p>
         <div class="dialog-actions"><button class="button ghost" value="cancel" type="submit">取消</button><button class="button destructive" id="confirm-delete-conversation" type="button">删除对话</button></div>
       </form>
+    </dialog>
+
+    <dialog class="dialog portfolio-dialog" id="portfolio-dialog" aria-labelledby="portfolio-heading">
+      <div class="dialog-card">
+        <div class="dialog-heading"><div><h2 id="portfolio-heading">我的能力证据册</h2><p class="dialog-note" id="portfolio-summary">正在读取学习记录…</p></div><button class="dialog-close" id="close-portfolio" type="button" aria-label="关闭">×</button></div>
+        <div class="portfolio-list" id="portfolio-list"></div>
+        <textarea id="portfolio-export" class="portfolio-export" readonly hidden aria-label="可复制的 Markdown 学习成果"></textarea>
+        <div class="dialog-actions"><button class="button ghost" id="refresh-portfolio" type="button">刷新</button><button class="button primary" id="export-portfolio" type="button" disabled>导出学习成果</button></div>
+      </div>
+    </dialog>
+
+    <dialog class="dialog portfolio-dialog" id="practice-dialog" aria-labelledby="practice-heading">
+      <div class="dialog-card">
+        <div class="dialog-heading"><div><h2 id="practice-heading">练习副本差异</h2><p class="dialog-note" id="practice-summary"></p></div><button class="dialog-close" id="close-practice" type="button" aria-label="关闭">×</button></div>
+        <div id="practice-diffs" class="practice-diffs"></div>
+        <div class="dialog-actions"><button class="button ghost" id="reset-practice" type="button" disabled>还原副本到起点</button></div>
+      </div>
     </dialog>
 
     <div class="toast-stack" id="toast-stack"></div>

@@ -105,6 +105,18 @@ const els = {
   learningFeedback: $("#learning-feedback"),
   lessonSummary: $("#lesson-summary"),
   composerNote: $("#composer-note"),
+  attemptEvidence: $("#attempt-evidence"), evidencePaths: $("#evidence-paths"),
+  attemptPrediction: $("#attempt-prediction"), attemptConfidence: $("#attempt-confidence"),
+  recordPrediction: $("#record-prediction"), predictionStatus: $("#prediction-status"),
+  attemptObservedResult: $("#attempt-observed-result"), evidenceCards: $("#evidence-cards"),
+  loadHistory: $("#load-history"), openPortfolio: $("#open-portfolio"),
+  portfolioDialog: $("#portfolio-dialog"), closePortfolio: $("#close-portfolio"),
+  portfolioSummary: $("#portfolio-summary"), portfolioList: $("#portfolio-list"),
+  refreshPortfolio: $("#refresh-portfolio"), exportPortfolio: $("#export-portfolio"),
+  portfolioExport: $("#portfolio-export"), createPracticeCopy: $("#create-practice-copy"),
+  viewPracticeDiff: $("#view-practice-diff"), practiceDialog: $("#practice-dialog"),
+  practiceSummary: $("#practice-summary"), practiceDiffs: $("#practice-diffs"),
+  closePractice: $("#close-practice"), resetPractice: $("#reset-practice"),
 };
 
 const STATUS_LABELS = {
@@ -140,6 +152,10 @@ const ui = {
   unread: false,
   streamConnected: false,
   toolDetails: new Set(),
+  evidenceDrafts: new Map(), evidenceConversationId: null, evidenceStepKey: null,
+  historyEvents: new Map(), historyConversationId: null, historyEpoch: null, historyHasMore: null, historyRequest: null,
+  portfolio: null, portfolioLoading: false, challengeLoading: false,
+  practiceLoading: false, practiceContext: null,
 };
 
 function scrollRegion(node, label) {
@@ -220,17 +236,23 @@ function toast(message, isError = false) {
   window.setTimeout(() => node.remove(), 4200);
 }
 
+let csrfToken = "";
 async function api(path, options = {}) {
+  if (options.method && options.method !== "GET" && !csrfToken) {
+    const security = await fetch("/api/security").then(response => response.json());
+    csrfToken = security.csrf_token;
+  }
   let response;
   try {
     response = await fetch(path, {
       ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      headers: { "Content-Type": "application/json", "X-MTD-CSRF": csrfToken, ...(options.headers || {}) },
     });
   } catch { throw new Error("无法连接本机服务，请检查桌面程序是否仍在运行。你的输入已保留。"); }
   let body = {};
   try {
     body = await response.json();
+    if (body.csrf_token) csrfToken = body.csrf_token;
   } catch {
     throw new Error(`本机服务返回了无法读取的内容（${response.status}）。你的输入已保留。`);
   }
@@ -311,6 +333,7 @@ function renderEnvironment(environment = {}) {
 function applyState(data) {
   if (ui.retiredEpochs.has(data.state_epoch)) return;
   if (ui.data?.state_epoch === data.state_epoch && (data.version ?? 0) < (ui.data?.version ?? 0)) return;
+  if (data.csrf_token) csrfToken = data.csrf_token;
   if (ui.data?.state_epoch && ui.data.state_epoch !== data.state_epoch) ui.retiredEpochs.add(ui.data.state_epoch);
   const previousId = ui.data?.active_conversation_id;
   if (previousId !== data.active_conversation_id) {
@@ -549,6 +572,21 @@ function renderStatus(data, busy) {
 }
 
 function renderLesson(lesson = {}, busy) {
+  syncEvidenceDraft();
+  els.attemptEvidence.hidden = !ui.data?.active_project;
+  for (const element of [els.evidencePaths, els.attemptPrediction, els.attemptConfidence, els.attemptObservedResult, els.createPracticeCopy]) element.disabled = busy;
+  els.viewPracticeDiff.disabled = !ui.data?.active_project;
+  const recordedPrediction = lesson.pending_prediction?.step_id === lesson.current_step?.id ? lesson.pending_prediction : null;
+  els.attemptPrediction.readOnly = Boolean(recordedPrediction);
+  els.attemptConfidence.readOnly = Boolean(recordedPrediction);
+  els.recordPrediction.disabled = busy || !lesson.current_step || Boolean(recordedPrediction) || lesson.pending_review;
+  if (recordedPrediction) {
+    els.attemptPrediction.value = recordedPrediction.text;
+    els.attemptConfidence.value = recordedPrediction.confidence == null ? "" : String(recordedPrediction.confidence);
+  }
+  els.predictionStatus.textContent = recordedPrediction
+    ? `已在 ${new Date(recordedPrediction.recorded_at).toLocaleString("zh-CN")} 记录，本步保留原预测`
+    : "动手前记录后，可在提交时对照实际结果。";
   const key = JSON.stringify([lesson, busy, ui.reviewingAttempt, ui.data?.active_project_id || null, ui.data?.active_conversation_id || null]);
   if (key === ui.lastLessonKey) return;
   ui.lastLessonKey = key;
@@ -634,10 +672,23 @@ function renderLesson(lesson = {}, busy) {
   els.lessonSummary.textContent = lesson.mastery_verified
     ? "本轮独立练习与迁移检验满足掌握规则。"
     : `已记录 ${lesson.attempts?.length || 0} 次尝试 · ${lesson.independent_successes || 0} 次无帮助独立通过。正确性与推理由导师审阅。`;
+  renderEvidenceCards(lesson.evidence_cards || []);
+  if (els.portfolioDialog.open && ui.portfolio) renderPortfolio(ui.portfolio);
 }
 
 function renderChat(data) {
-  const events = Array.isArray(data.events) ? data.events : [];
+  if (ui.historyConversationId !== data.active_conversation_id || ui.historyEpoch !== data.state_epoch) {
+    ui.historyConversationId = data.active_conversation_id;
+    ui.historyEpoch = data.state_epoch;
+    ui.historyEvents.clear();
+    ui.historyHasMore = null;
+    ui.historyRequest = null;
+  }
+  if (ui.historyEvents.size) for (const event of data.events || []) ui.historyEvents.set(event.id, event);
+  const mergedEvents = new Map(ui.historyEvents);
+  for (const event of data.events || []) mergedEvents.set(event.id, event);
+  const events = [...mergedEvents.values()].sort((a, b) => a.id - b.id);
+  updateHistoryButton(data);
   const pendingId = data.pending?.id || "";
   const key = JSON.stringify([data.active_conversation_id, events, data.status, pendingId]);
   if (key === ui.lastChatKey) return;
@@ -1053,6 +1104,273 @@ async function deleteConversation() {
   finally { ui.deleting = false; els.confirmDeleteConversation.disabled = isBusy(ui.data?.status); }
 }
 
+function evidenceFormValues() {
+  return {paths: els.evidencePaths.value, prediction: els.attemptPrediction.value,
+    confidence: els.attemptConfidence.value, observed_result: els.attemptObservedResult.value};
+}
+
+function syncEvidenceDraft() {
+  const conversationId = ui.data?.active_conversation_id;
+  const stepKey = `${conversationId || ""}|${ui.data?.lesson?.current_step?.id || ""}`;
+  if (ui.evidenceStepKey === stepKey) return;
+  if (ui.evidenceStepKey) ui.evidenceDrafts.set(ui.evidenceStepKey, evidenceFormValues());
+  const draft = ui.evidenceDrafts.get(stepKey) || {};
+  els.evidencePaths.value = draft.paths || "";
+  els.attemptPrediction.value = draft.prediction || "";
+  els.attemptConfidence.value = draft.confidence || "";
+  els.attemptObservedResult.value = draft.observed_result || "";
+  ui.evidenceConversationId = conversationId;
+  ui.evidenceStepKey = stepKey;
+  els.attemptEvidence.open = false;
+  ui.practiceContext = null;
+  if (els.practiceDialog.open) els.practiceDialog.close();
+}
+
+function selectedEvidencePaths() {
+  const paths = els.evidencePaths.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+  if (paths.length > 3) throw new Error("每次最多附上 3 个作品文件。");
+  if (paths.some(path => /^(?:[/\\]|[A-Za-z]:)/.test(path) || path.split(/[/\\]/).includes(".."))) {
+    throw new Error("请填写工作区内的相对文件路径。");
+  }
+  return [...new Set(paths)];
+}
+
+function attemptEvidencePayload() {
+  const payload = {paths: selectedEvidencePaths()};
+  const prediction = els.attemptPrediction.value.trim();
+  const observed = els.attemptObservedResult.value.trim();
+  const rawConfidence = els.attemptConfidence.value.trim();
+  const recorded = ui.data?.lesson?.pending_prediction?.step_id === ui.data?.lesson?.current_step?.id && ui.data?.lesson?.pending_prediction;
+  if (prediction && !recorded) payload.prediction = prediction;
+  if (observed) payload.observed_result = observed;
+  if (rawConfidence && !recorded) {
+    const confidence = Number(rawConfidence);
+    if (!Number.isInteger(confidence) || confidence < 0 || confidence > 100) throw new Error("信心程度请填写 0 到 100 的整数。");
+    payload.confidence = confidence;
+  }
+  return payload;
+}
+
+async function recordPrediction() {
+  if (isBusy(ui.data?.status) || !ui.data?.lesson?.current_step || ui.data.lesson.pending_prediction) return;
+  try {
+    const payload = attemptEvidencePayload();
+    if (!payload.prediction) throw new Error("先写下你预计会出现的结果。");
+    els.recordPrediction.disabled = true;
+    const data = await api("/api/workspace/learning/prediction", {method: "POST", body: JSON.stringify({
+      prediction: payload.prediction, confidence: payload.confidence,
+      conversation_id: ui.data.active_conversation_id,
+    })});
+    applyState(data);
+  } catch (error) { toast(error.message, true); }
+  finally { els.recordPrediction.disabled = isBusy(ui.data?.status) || Boolean(ui.data?.lesson?.pending_prediction) || !ui.data?.lesson?.current_step; }
+}
+
+function studyText(tag, text, className = "") {
+  const element = document.createElement(tag);
+  element.textContent = text || "";
+  element.className = className;
+  return element;
+}
+
+function renderEvidenceCards(cards) {
+  els.evidenceCards.hidden = !cards.length;
+  els.evidenceCards.replaceChildren();
+  if (!cards.length) return;
+  els.evidenceCards.append(studyText("h3", "作品与尝试证据"));
+  for (const card of [...cards].reverse()) {
+    const details = document.createElement("details");
+    details.className = "evidence-card";
+    const status = card.mastery_passed ? "迁移检验通过" : card.practice?.correctness === "correct" ? "已审阅" : "待改进";
+    details.append(studyText("summary", `${card.task || "学习尝试"} · ${status}`));
+    const practice = card.practice || {};
+    details.append(studyText("p", practice.answer_viewed ? "本次保留演示帮助记录" : practice.hint_level ? `本次使用 L${practice.hint_level} 提示` : "本次未记录提示或演示", "evidence-meta"));
+    if (card.explanation) details.append(studyText("p", `我的思路 · ${card.explanation}`));
+    if (card.prediction) details.append(studyText("p", `${card.prediction_recorded_at ? "预先记录预测" : "提交时的预测"} · ${card.prediction}${card.confidence != null ? `（信心 ${card.confidence}%）` : ""}`));
+    if (card.observed_result) details.append(studyText("p", `实际观察 · ${card.observed_result}`));
+    for (const artifact of card.artifacts || []) {
+      const file = studyText("div", "", "artifact-evidence");
+      file.append(studyText("strong", artifact.path));
+      const fingerprint = artifact.hash || artifact.sha256 || "";
+      file.append(studyText("p", `${artifact.size ?? 0} 字节 · 指纹 ${fingerprint.slice(0, 12)}`, "evidence-meta"));
+      for (const check of artifact.checks || []) file.append(studyText("p", `${check.passed ? "✓" : "需检查"} ${check.name || check.type}${check.detail ? ` · ${check.detail}` : ""}`, check.passed ? "check-passed" : "check-failed"));
+      details.append(file);
+    }
+    if (card.feedback) details.append(studyText("p", `导师反馈 · ${card.feedback}`));
+    if (card.evidence) details.append(studyText("p", `审阅依据 · ${card.evidence}`, "evidence-meta"));
+    els.evidenceCards.append(details);
+  }
+}
+
+function updateHistoryButton(data) {
+  const hasMore = ui.historyHasMore ?? data.history_has_more ?? (data.events || []).length >= 500;
+  els.loadHistory.hidden = !data.active_conversation_id || !hasMore;
+  els.loadHistory.disabled = Boolean(ui.historyRequest);
+  els.loadHistory.textContent = ui.historyRequest ? "正在加载更早记录…" : "加载更早的学习记录";
+}
+
+async function loadEarlierHistory() {
+  const conversationId = ui.data?.active_conversation_id;
+  if (!conversationId || ui.historyRequest) return;
+  const events = [...ui.historyEvents.values(), ...(ui.data.events || [])];
+  if (!events.length) return;
+  const before = Math.min(...events.map(event => event.id));
+  const request = {conversationId, epoch: ui.data.state_epoch};
+  ui.historyRequest = request;
+  updateHistoryButton(ui.data);
+  try {
+    const query = new URLSearchParams({conversation_id: conversationId, before, limit: 100});
+    const history = await api(`/api/workspace/history?${query}`);
+    if (history.conversation_id !== conversationId || ui.data?.active_conversation_id !== conversationId || ui.data.state_epoch !== request.epoch || ui.historyRequest !== request) return;
+    const height = els.chatViewport.scrollHeight;
+    const top = els.chatViewport.scrollTop;
+    for (const event of history.events || []) ui.historyEvents.set(event.id, event);
+    ui.historyHasMore = history.has_more;
+    renderChat(ui.data);
+    els.chatViewport.scrollTop = top + els.chatViewport.scrollHeight - height;
+  } catch (error) { toast(error.message, true); }
+  finally {
+    if (ui.historyRequest === request) ui.historyRequest = null;
+    updateHistoryButton(ui.data || {});
+  }
+}
+
+function renderPortfolio(data) {
+  const skills = data.skills || [];
+  const dueCount = (data.due_challenges || []).length;
+  els.portfolioSummary.textContent = `${skills.length} 项学习能力 · ${data.artifact_count || 0} 份作品证据 · ${dueCount} 项到期挑战`;
+  els.openPortfolio.querySelector("span:last-child").textContent = dueCount ? `能力证据册 · ${dueCount} 项待复验` : "我的能力证据册";
+  els.portfolioList.replaceChildren();
+  if (!skills.length) els.portfolioList.append(studyText("p", "完成一次学习尝试后，你的作品和反馈会汇集在这里。", "dialog-note"));
+  for (const skill of skills) {
+    const card = studyText("section", "", "portfolio-skill");
+    card.append(studyText("h3", skill.goal));
+    const status = skill.delayed_verified ? "隔日迁移已验证" : skill.mastery_verified ? "当次迁移已通过" : "正在积累独立证据";
+    card.append(studyText("p", `${status} · ${skill.attempt_count || 0} 次尝试 · ${skill.independent_successes || 0} 次独立通过`, "evidence-meta"));
+    if (skill.last_verified_at) card.append(studyText("p", `最近验证 ${new Date(skill.last_verified_at).toLocaleDateString("zh-CN")}${skill.due_at ? ` · 下次复验 ${new Date(skill.due_at).toLocaleDateString("zh-CN")}` : ""}`, "evidence-meta"));
+    for (const artifact of skill.artifacts || []) card.append(studyText("p", `◇ ${artifact.path} · ${(artifact.hash || artifact.sha256 || "").slice(0, 12)}`, "portfolio-artifact"));
+    if (skill.last_feedback?.feedback) card.append(studyText("p", skill.last_feedback.feedback));
+    if ((data.due_challenges || []).some(item => item.skill_id === skill.skill_id)) {
+      const button = studyText("button", "开始新的独立挑战", "button primary");
+      button.type = "button";
+      button.disabled = isBusy(ui.data?.status) || ui.challengeLoading;
+      button.addEventListener("click", () => startSkillChallenge(skill.skill_id));
+      card.append(button);
+    }
+    els.portfolioList.append(card);
+  }
+  els.exportPortfolio.disabled = !skills.length;
+}
+
+async function refreshPortfolio(silent = false) {
+  if (ui.portfolioLoading) return;
+  ui.portfolioLoading = true;
+  els.refreshPortfolio.disabled = true;
+  try {
+    ui.portfolio = await api("/api/workspace/portfolio");
+    renderPortfolio(ui.portfolio);
+  } catch (error) {
+    els.portfolioSummary.textContent = "暂时无法读取能力记录，请稍后刷新。";
+    if (!silent) toast(error.message, true);
+  } finally {
+    ui.portfolioLoading = false;
+    els.refreshPortfolio.disabled = false;
+  }
+}
+
+async function startSkillChallenge(skillId) {
+  if (ui.challengeLoading || isBusy(ui.data?.status)) return;
+  ui.challengeLoading = true;
+  renderPortfolio(ui.portfolio || {});
+  try {
+    const data = await api("/api/workspace/learning/challenge", {method: "POST", body: JSON.stringify({skill_id: skillId})});
+    els.portfolioDialog.close();
+    applyState(data);
+    els.message.focus();
+  } catch (error) { toast(error.message, true); }
+  finally { ui.challengeLoading = false; if (ui.portfolio) renderPortfolio(ui.portfolio); }
+}
+
+function portfolioMarkdown(data) {
+  const lines = ["# 我的学习成果", "", `导出日期 ${new Date().toLocaleDateString("zh-CN")}`, ""];
+  for (const skill of data.skills || []) {
+    lines.push(`## ${skill.goal}`, "", `尝试 ${skill.attempt_count || 0} 次，独立通过 ${skill.independent_successes || 0} 次。`,
+      skill.delayed_verified ? "隔日迁移已验证。" : skill.mastery_verified ? "当次迁移已通过。" : "正在积累独立证据。", "");
+    if (skill.last_verified_at) lines.push(`最近验证 ${skill.last_verified_at}`, "");
+    for (const artifact of skill.artifacts || []) lines.push(`- 作品 ${artifact.path}，SHA-256 ${artifact.hash || artifact.sha256 || ""}`);
+    if (skill.last_feedback?.feedback) lines.push("", `导师反馈 ${skill.last_feedback.feedback}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function exportPortfolio() {
+  if (!ui.portfolio?.skills?.length) return;
+  const text = portfolioMarkdown(ui.portfolio);
+  els.portfolioExport.value = text;
+  els.portfolioExport.hidden = false;
+  const url = URL.createObjectURL(new Blob([text], {type: "text/markdown;charset=utf-8"}));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "我的学习成果.md";
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  els.portfolioExport.focus();
+  els.portfolioExport.select();
+}
+
+async function createPracticeCopy() {
+  if (ui.practiceLoading || isBusy(ui.data?.status) || !ui.data?.active_project) return;
+  try {
+    const paths = selectedEvidencePaths();
+    if (!paths.length) throw new Error("先在作品文件中填写要练习的文本文件路径。");
+    ui.practiceLoading = true;
+    els.createPracticeCopy.disabled = true;
+    const data = await api("/api/workspace/practice-copy", {method: "POST", body: JSON.stringify({paths, conversation_id: ui.data.active_conversation_id})});
+    applyState(data);
+    toast("练习副本已创建，可以在新项目中尝试和对照修改。");
+  } catch (error) { toast(error.message, true); }
+  finally { ui.practiceLoading = false; els.createPracticeCopy.disabled = isBusy(ui.data?.status); }
+}
+
+async function openPracticeDiff() {
+  if (!ui.data?.active_project) return;
+  const context = {conversationId: ui.data.active_conversation_id, epoch: ui.data.state_epoch};
+  ui.practiceContext = context;
+  els.practiceSummary.textContent = "正在读取副本差异…";
+  els.practiceDiffs.replaceChildren();
+  els.resetPractice.disabled = true;
+  els.practiceDialog.showModal();
+  try {
+    const data = await api(`/api/workspace/practice-copy?conversation_id=${encodeURIComponent(context.conversationId)}`);
+    if (ui.practiceContext !== context || ui.data?.active_conversation_id !== context.conversationId || ui.data.state_epoch !== context.epoch) return;
+    els.practiceSummary.textContent = data.available ? "这里显示练习副本相对创建时的文件变化。" : "当前项目还没有练习副本。可用选定的作品文件创建副本。";
+    els.resetPractice.disabled = !data.available || isBusy(ui.data?.status);
+    for (const item of data.diffs || []) {
+      const block = document.createElement("details");
+      block.open = true;
+      block.append(studyText("summary", item.path));
+      block.append(scrollRegion(studyText("pre", item.diff || "此文件与起点一致。"), "文件差异，可滚动查看"));
+      els.practiceDiffs.append(block);
+    }
+  } catch (error) { els.practiceSummary.textContent = error.message; }
+}
+
+async function resetPracticeCopy() {
+  const context = ui.practiceContext;
+  if (!context || ui.practiceLoading || isBusy(ui.data?.status) || ui.data?.active_conversation_id !== context.conversationId || ui.data.state_epoch !== context.epoch) return;
+  if (!window.confirm("将还原练习副本中的这些文件，副本内的修改会被覆盖。确认还原？")) return;
+  ui.practiceLoading = true;
+  els.resetPractice.disabled = true;
+  try {
+    const data = await api("/api/workspace/practice-reset", {method: "POST", body: JSON.stringify({conversation_id: context.conversationId})});
+    applyState(data);
+    els.practiceDialog.close();
+    toast("练习副本已还原，可以重新亲手尝试。");
+  } catch (error) { toast(error.message, true); }
+  finally { ui.practiceLoading = false; }
+}
+
 async function refresh() {
   if (ui.polling) return;
   ui.polling = true;
@@ -1078,7 +1396,17 @@ async function learningAction(action) {
 async function submitAttempt() {
   const answer = els.message.value.trim();
   if (!answer) { toast("先写下你的思路、操作或观察到的结果。", true); els.message.focus(); return; }
-  await submitComposer("/api/workspace/learning/attempt", {answer});
+  try {
+    const evidence = attemptEvidencePayload();
+    const conversationId = ui.data?.active_conversation_id;
+    const draft = evidenceFormValues();
+    const sent = await submitComposer("/api/workspace/learning/attempt", {answer, ...evidence});
+    if (sent && conversationId === ui.data?.active_conversation_id && JSON.stringify(evidenceFormValues()) === JSON.stringify(draft)) {
+      const recorded = ui.data?.lesson?.pending_prediction;
+      const fields = recorded ? [els.evidencePaths, els.attemptObservedResult] : [els.evidencePaths, els.attemptPrediction, els.attemptConfidence, els.attemptObservedResult];
+      for (const element of fields) element.value = "";
+    }
+  } catch (error) { toast(error.message, true); }
 }
 
 async function selectProject(projectId) {
@@ -1147,8 +1475,10 @@ async function submitComposer(path, payload) {
     resizeComposer();
     applyState(data);
     updateScrollPosition(true);
+    return true;
   } catch (error) {
     toast(error.message, true);
+    return false;
   } finally {
     ui.pendingSend = false;
     els.send.disabled = isBusy(ui.data?.status) || !ui.data?.active_project;
@@ -1435,6 +1765,17 @@ els.approve.addEventListener("click", () => approve(true));
 els.reject.addEventListener("click", () => approve(false));
 els.cancel.addEventListener("click", cancelRun);
 els.submitAttempt.addEventListener("click", submitAttempt);
+els.recordPrediction.addEventListener("click", recordPrediction);
+els.loadHistory.addEventListener("click", loadEarlierHistory);
+els.openPortfolio.addEventListener("click", () => { els.portfolioDialog.showModal(); refreshPortfolio(); });
+els.closePortfolio.addEventListener("click", () => els.portfolioDialog.close());
+els.refreshPortfolio.addEventListener("click", () => refreshPortfolio());
+els.exportPortfolio.addEventListener("click", exportPortfolio);
+els.createPracticeCopy.addEventListener("click", createPracticeCopy);
+els.viewPracticeDiff.addEventListener("click", openPracticeDiff);
+els.closePractice.addEventListener("click", () => els.practiceDialog.close());
+els.practiceDialog.addEventListener("close", () => { ui.practiceContext = null; });
+els.resetPractice.addEventListener("click", resetPracticeCopy);
 els.reviewPendingAttempt.addEventListener("click", async () => {
   if (ui.reviewingAttempt || isBusy(ui.data?.status) || !ui.data?.lesson?.pending_review) return;
   ui.reviewingAttempt = true;
@@ -1471,6 +1812,7 @@ async function boot() {
   scrollRegion(els.approvalArgs, "待批准操作内容，可滚动查看");
   scrollRegion(els.approvalRaw, "完整操作参数，可滚动查看");
   await refresh();
+  refreshPortfolio(true);
   if (window.location.hash === "#settings") openSettings();
   if (window.location.hash === "#project") openProjectDialog();
   connectEvents();
