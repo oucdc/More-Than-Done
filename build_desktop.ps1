@@ -33,6 +33,8 @@ $pyinstallerArguments = @(
     "--name", "MoreThanDone",
     "--distpath", $outputPath,
     "--version-file", (Join-Path $projectRoot "windows_version.txt"),
+    "--icon", (Join-Path $projectRoot "branding\MTD.ico"),
+    "--add-data", "$projectRoot\branding\MTD.ico;branding",
     "--workpath", $workPath,
     "--specpath", $workPath,
     "--add-data", "$projectRoot\web;web",

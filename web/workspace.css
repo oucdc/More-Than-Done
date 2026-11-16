@@ -483,6 +483,7 @@ button, select, input, textarea { transition: border-color .16s ease, background
 .sidebar { border-right-color: #27352d; }
 .brand { padding: 22px 18px 20px; }
 .brand-mark { width: 38px; height: 38px; border-radius: 12px; border-color: #547967; background: #294438; color: #d8f2df; }
+.brand-mark img { display: block; width: 100%; height: 100%; }
 .brand-copy strong { color: #f3f8f3; letter-spacing: .01em; }
 .brand-copy span { color: #9eafa3; font-size: .66rem; letter-spacing: .1em; }
 .new-chat { min-height: 44px; margin: 0 12px 19px; padding: 10px 12px; border-color: #466354; border-radius: 10px; background: #294137; color: #f2f9f3; font-weight: 600; }

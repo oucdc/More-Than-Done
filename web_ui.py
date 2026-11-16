@@ -421,6 +421,9 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/workspace-assets/workspace.css":
             self._serve_file("workspace.css", "text/css; charset=utf-8")
             return
+        if parsed.path == "/workspace-assets/MTD.svg":
+            self._serve_file("MTD.svg", "image/svg+xml")
+            return
         if parsed.path == "/workspace-assets/workspace.js":
             self._serve_file("workspace.js", "text/javascript; charset=utf-8")
             return

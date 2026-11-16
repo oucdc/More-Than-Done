@@ -28,6 +28,7 @@ ROOT_FILES = (
 OPTIONAL_ROOT_FILES = (
     "THIRD_PARTY_NOTICES.md", "AGENTS.md", "PROJECT_GUIDE.zh-CN.md",
     "CHANGELOG.zh-CN.md", "RELEASE_NOTES_0.2.0.zh-CN.md",
+    "RELEASE_NOTES_0.2.1.zh-CN.md", "branding/MTD.ico", "branding/MTD.svg", "branding/MTD.png",
 )
 PYTHON_TREES = ("agent", "learning", "storage", "scripts", "tests")
 WEB_SUFFIXES = {".css", ".js", ".html", ".txt", ".md"}
