@@ -551,6 +551,13 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
                     state = self.server.workspace.save_config(payload)
                 elif self.path == "/api/workspace/chat":
                     state = self.server.workspace.send(payload.get("message"), conversation_id=payload.get("conversation_id") or "")
+                elif self.path == "/api/workspace/chat/choice":
+                    if ("option_index" in payload) == ("other" in payload):
+                        raise ValueError("请选择一个选项，或填写‘其他’。")
+                    state = self.server.workspace.answer_choice(
+                        payload.get("question_id"), conversation_id=payload.get("conversation_id"),
+                        option_index=payload.get("option_index"), other=payload.get("other"),
+                    )
                 elif self.path == "/api/workspace/approve":
                     state = self.server.workspace.approve(payload.get("id"), payload.get("allow"))
                 elif self.path == "/api/workspace/cancel":

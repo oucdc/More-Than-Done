@@ -2,15 +2,18 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**0.2.0 版 · Windows 桌面学习工作台**
+**0.2.1 版 · Windows 桌面学习工作台**
 
 More Than Done 是一款教育 AI Agent，帮助你理解任务、亲手尝试、获得反馈，并逐步独立完成。它把本地项目、流式聊天和由程序记录进度的学习计划放在同一个工作台中。
+
+[0.2.1 发行说明](RELEASE_NOTES_0.2.1.zh-CN.md) · [版本变更记录](CHANGELOG.zh-CN.md)
 
 ## 功能
 
 - 选择文件夹作为项目工作区，在项目下组织多段对话。
 - 对话支持重命名、置顶、归档恢复、移动和删除；项目也有右键管理菜单。删除项目会删除其中的对话记录，工作区文件会保留。
 - 模型流式回复，工具卡片显示退出码、超时、原因和命令输出。
+- 直接在对话里回答导师的选择问题，也可以选“其他”写出自己的答案。
 - 按小步骤学习，提交自己的尝试、请求分级帮助，并在审阅后继续。获得帮助和独立完成分别记录。
 - 项目文件夹移动后，可在项目右键菜单中“重新选择文件夹”，聊天和学习记录会保留。迁移检验未通过时，可点击“重新练习并检验”，完成新的独立练习和迁移题。
 - 长代码、宽表格和长消息在各自框内滚动，不会撑宽整个界面。
@@ -31,6 +34,10 @@ More Than Done 是一款教育 AI Agent，帮助你理解任务、亲手尝试�
 ## 归档保存在哪里
 
 项目/对话归档仍保存在 EXE 同目录的 `data/conversations.json`，只标记归档，不移动、压缩或复制工作区文件夹；原文件夹仍在你选择的位置。点击侧栏“已归档”可查看并恢复。源码运行时位于源码目录的 `data/conversations.json`；用 `--data-dir` 启动时位于指定目录。归档不等于备份，备份时请同时保存 `data` 和工作区文件。`data` 可能含密钥和私人对话，不能随发行包分享。
+
+## 回答对话选项
+
+导师需要确认目标、经验或偏好时，可能会给出一组选项。选中一项后点击“提交答案”，或选“其他”展开输入框，写出自己的答案。也可以直接在聊天输入框回复。要保存学习作答记录，请使用“提交我的尝试”。
 
 ## 从源码运行
 
@@ -85,7 +92,7 @@ Node.js 只用于 JavaScript 语法检查。原生布局验收依赖 Edge WebVie
 构建 Windows EXE 并整理便携发行包：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.2.0-windows-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.2.1-windows-x64
 .\.venv\Scripts\python.exe -m scripts.package_release
 ```
 

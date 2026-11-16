@@ -523,6 +523,83 @@ button, select, input, textarea { transition: border-color .16s ease, background
 .message { padding: 16px 18px; border-color: #e2eae2; border-radius: 14px; color: #34443a; box-shadow: 0 3px 12px #294b3309; line-height: 1.85; }
 .message.user { border-color: #d3e8d8; border-radius: 14px 14px 4px 14px; background: #e9f4eb; }
 .message-label { color: #66826e; font-weight: 700; }
+.message.choice-question {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-color: #e8e8e8;
+  border-radius: 16px;
+  background: #fff;
+  color: #1b1d1f;
+  box-shadow: none;
+  line-height: 1.5;
+}
+.choice-question fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.choice-question-text {
+  max-width: 100%;
+  margin-bottom: 8px;
+  padding: 0;
+  font-size: 1.0625rem;
+  font-weight: 650;
+  white-space: pre-wrap;
+}
+.choice-options { display: grid; }
+.choice-option {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.choice-option input {
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  border: 1.5px solid #d2d3d5;
+  border-radius: 50%;
+  background: #fff;
+  cursor: inherit;
+}
+.choice-option:hover input:enabled { border-color: #77797c; }
+.choice-option input:checked,
+.choice-option:hover input:checked { border: 8px solid #191b1d; }
+.choice-question fieldset:disabled .choice-option { color: #686a6d; cursor: default; }
+.choice-question :focus-visible { outline-color: #515356; }
+@media (forced-colors: active) {
+  .choice-option input { appearance: auto; }
+}
+.choice-other-field { display: grid; gap: 6px; font-size: .875rem; }
+.choice-other-field textarea {
+  width: 100%;
+  min-height: 64px;
+  max-height: 180px;
+  resize: vertical;
+  padding: 9px 11px;
+  border: 1px solid #d2d3d5;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+.choice-submit {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: #191b1d;
+  color: #fff;
+  font-weight: 600;
+}
+.choice-submit:enabled:hover { background: #333537; }
+.choice-submit:disabled { background: #eeeff0; color: #686a6d; opacity: 1; }
 .composer-wrap { padding: 0 24px 13px; background: var(--paper); }
 .composer { width: min(860px, 100%); padding: 14px 14px 11px; border-color: #d1dfd3; border-radius: 16px; background: #fff; box-shadow: 0 10px 32px #294b3310; }
 .composer:focus-within { border-color: #77a989; box-shadow: 0 0 0 3px #dcefe0, 0 10px 32px #294b3310; }

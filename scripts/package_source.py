@@ -25,7 +25,10 @@ ROOT_FILES = (
     "requirements-build.txt", "windows_version.txt", "build_desktop.ps1",
     "build_exe.ps1", "main.py", "cli.py", "config.py", "desktop_app.py", "web_ui.py",
 )
-OPTIONAL_ROOT_FILES = ("THIRD_PARTY_NOTICES.md",)
+OPTIONAL_ROOT_FILES = (
+    "THIRD_PARTY_NOTICES.md", "AGENTS.md", "PROJECT_GUIDE.zh-CN.md",
+    "CHANGELOG.zh-CN.md", "RELEASE_NOTES_0.2.0.zh-CN.md",
+)
 PYTHON_TREES = ("agent", "learning", "storage", "scripts", "tests")
 WEB_SUFFIXES = {".css", ".js", ".html", ".txt", ".md"}
 SKIP_DIRECTORIES = {

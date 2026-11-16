@@ -55,6 +55,7 @@ class WorkspaceManager:
         self.revision = 0
         self.state_epoch = uuid4().hex
         self.session.on_update = self._persist_session
+        self.session.choice_questions = True
 
     def _persist_session(self) -> None:
         with self.lock:
@@ -521,6 +522,14 @@ class WorkspaceManager:
             self._require_project_locked()
             self._check_target_locked(conversation_id)
             self.session.send(message)
+            return self._state_locked()
+
+    def answer_choice(self, question_id: object, *, conversation_id: object,
+                      option_index: object = None, other: object = None) -> dict[str, Any]:
+        with self.lock:
+            self._require_project_locked()
+            self._check_target_locked(conversation_id or "")
+            self.session.answer_choice(question_id, option_index=option_index, other=other)
             return self._state_locked()
 
     def approve(self, approval_id: object, allow: object) -> dict[str, Any]:

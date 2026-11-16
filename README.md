@@ -2,15 +2,18 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**Version 0.2.0 · Windows desktop learning workspace**
+**Version 0.2.1 · Windows desktop learning workspace**
 
 More Than Done is an educational AI agent that helps you understand a task, try it yourself, receive feedback, and build the ability to work independently. It combines a local project workspace, streaming chat, and a learning plan whose progress is recorded by the application.
+
+[0.2.1 release notes](RELEASE_NOTES_0.2.1.zh-CN.md) · [Version history](CHANGELOG.zh-CN.md) (Chinese)
 
 ## Features
 
 - Select a folder as a project workspace and keep conversations under that project.
 - Rename, pin, archive, restore, move, and delete conversations; manage projects from their context menus. Deleting a project removes its saved conversations, not the workspace files.
 - Receive streaming model replies and inspect readable tool results, exit codes, timeouts, and command output.
+- Answer the tutor's choice questions directly in the workspace chat, or choose **其他** (Other) to write your own answer.
 - Follow small learning steps, submit your own attempts, request graded help, and advance after review. Assisted work is recorded separately from independent evidence.
 - Reconnect moved project folders with **重新选择文件夹…** in the project menu. After an unsuccessful transfer check, **重新练习并检验** requests a new independent exercise and transfer task while preserving previous evidence.
 - Read long code, tables, and messages inside their own scroll regions without widening the window.
@@ -31,6 +34,10 @@ First-time runtime installation needs internet access; this ZIP does not bundle 
 ## Where archives are stored
 
 Archived projects and conversations stay in `data/conversations.json` beside the EXE, marked as archived. Archiving does not move, compress, or copy the workspace folder; its files remain at the original location. Use **已归档** in the sidebar to restore records. Source runs use the source directory; `--data-dir` overrides the data directory. Archiving is not a backup: back up both `data` and workspace files. Never share personal `data` with a release because it can contain keys and private conversations.
+
+## Answer choice questions
+
+When the tutor asks a question with choices, pick one and click **提交答案** (Submit answer). Choose **其他** (Other) to open a text box for your own answer. You can also reply in the regular chat box. Use **提交我的尝试** to record a learning attempt.
 
 ## Run from source
 
@@ -85,7 +92,7 @@ Node.js is only needed for the JavaScript syntax check. Native layout checks use
 Build the Windows executable and assemble a portable release package:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.2.0-windows-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.2.1-windows-x64
 .\.venv\Scripts\python.exe -m scripts.package_release
 ```
 
