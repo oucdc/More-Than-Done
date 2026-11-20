@@ -216,6 +216,60 @@ def test_http_sse_delivers_partial_response_before_model_finishes_and_recovers(t
         thread.join(5)
 
 
+def test_workspace_sse_exposes_choice_once_the_streamed_tool_is_complete(tmp_path):
+    config = AgentConfigStore(tmp_path / "config.json", settings_loader=lambda: Settings(api_key="", model="test"))
+    config.update({"workspace": str(tmp_path), "api_key": "test-key"})
+    server = MoreThanDoneHTTPServer(
+        ("127.0.0.1", 0), object(), config_store=config,
+        conversation_store=ConversationStore(tmp_path / "chats.json"),
+    )
+    server.workspace.create_project({"workspace": str(tmp_path)})
+    finish_tool = threading.Event()
+
+    def provider():
+        yield chunk(text="我们先确定学习方向。")
+        yield chunk(tools=[fragment(
+            0, call_id="ask-1", name="ask_user_choice", arguments='{"question":"你想先做什么？","options":',
+        )])
+        assert finish_tool.wait(5)
+        yield chunk(tools=[fragment(0, arguments='["读例子","动手尝试"]}')])
+        yield chunk(finish="tool_calls")
+
+    llm, requests, _ = client_for(provider())
+    server.agent.client_factory = lambda _: llm
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        with urlopen(base + "/api/workspace/events", timeout=5) as response:
+            kind, initial = read_event(response)
+            assert kind == "state" and initial["active_question_id"] is None
+            server.workspace.send("我想开始学习。")
+            while True:
+                kind, partial = read_event(response)
+                if any(event["kind"] == "assistant" for event in partial["events"]):
+                    break
+            assert kind == "session" and partial["status"] == "running"
+            assert partial["active_question_id"] is None
+            assert all(event["kind"] != "choice_question" for event in partial["events"])
+            finish_tool.set()
+            while True:
+                _, final = read_event(response)
+                if final["status"] in {"idle", "error"}:
+                    break
+            assert final["status"] == "idle", final
+            cards = [event for event in final["events"] if event["kind"] == "choice_question"]
+            assert len(cards) == 1
+            assert cards[0]["id"] == final["active_question_id"]
+            assert cards[0]["options"] == ["读例子", "动手尝试"]
+            assert len(requests) == 1
+    finally:
+        finish_tool.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
 def test_interrupted_agent_preserves_partial_history_and_marks_event(tmp_path):
     from agent.local_agent import AgentSession
     store = AgentConfigStore(tmp_path / "config.json", settings_loader=lambda: Settings(api_key="", model="test"))

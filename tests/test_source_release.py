@@ -34,6 +34,8 @@ def source_root(tmp_path):
 
 def test_explicit_allowlist_ignores_git_tracking_and_private_files(tmp_path):
     root = source_root(tmp_path)
+    for name in ("AGENTS.md", "PROJECT_GUIDE.zh-CN.md"):
+        (root / name).write_text("Public project guide.\n", encoding="utf-8")
     private = [".env", "HANDOFF.md", "model prompt.md", ".git/config", "data/agent_config.json",
                "data/conversations.json", "data/archive/learner.json", "verification/screenshot.png",
                "agent/__pycache__/cache.py", "scripts/.venv/leak.py", "web/debug.log", "web/private.env",
@@ -50,6 +52,7 @@ def test_explicit_allowlist_ignores_git_tracking_and_private_files(tmp_path):
     assert "data/.gitkeep" in snapshot and "web/workspace.html" in snapshot
     assert ".github/workflows/ci.yml" in snapshot
     assert "agent/example.py" in snapshot
+    assert {"AGENTS.md", "PROJECT_GUIDE.zh-CN.md"}.issubset(snapshot)
     assert all(b"DO NOT EXPORT" not in data for data in snapshot.values())
 
 

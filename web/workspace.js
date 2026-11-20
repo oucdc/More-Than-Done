@@ -151,6 +151,9 @@ const ui = {
   editingConversationId: null,
   drafts: new Map(),
   attachmentDrafts: new Map(), mention: null,
+  choiceCards: new Map(),
+  choiceDrafts: new Map(),
+  activeChoiceCard: null,
   pendingSend: false,
   composing: false,
   unread: false,
@@ -700,15 +703,16 @@ function renderChat(data) {
   const events = [...mergedEvents.values()].sort((a, b) => a.id - b.id);
   updateHistoryButton(data);
   const pendingId = data.pending?.id || "";
-  const key = JSON.stringify([data.active_conversation_id, events, data.status, pendingId]);
+  const key = JSON.stringify([data.state_epoch, data.active_conversation_id, events, data.status, pendingId, data.active_question_id]);
   if (key === ui.lastChatKey) return;
   ui.lastChatKey = key;
-  const changedConversation = !ui.chatStructure.startsWith(`${data.active_conversation_id}|`);
+  const conversationKey = `${data.state_epoch}|${data.active_conversation_id}|`;
+  const changedConversation = !ui.chatStructure.startsWith(conversationKey);
   const nearBottom = changedConversation || els.chatViewport.scrollHeight - els.chatViewport.scrollTop - els.chatViewport.clientHeight < 140;
   const previousScrollTop = els.chatViewport.scrollTop;
   if (changedConversation) ui.unread = false;
   else if (!nearBottom) ui.unread = true;
-  const structure = `${data.active_conversation_id}|${events.map(event => event.id).join(",")}`;
+  const structure = `${conversationKey}${events.map(event => event.id).join(",")}`;
   if (structure === ui.chatStructure) {
     for (const event of events) {
       const previous = ui.renderedEvents.get(event.id);
@@ -722,14 +726,17 @@ function renderChat(data) {
       }
     }
     ui.renderedEvents = new Map(events.map(event => [event.id, { ...event }]));
+    updateChoiceControls(data);
     updateScrollPosition(nearBottom);
     return;
   }
   ui.chatStructure = structure;
   ui.renderedEvents = new Map(events.map(event => [event.id, { ...event }]));
   ui.toolCards.clear();
+  ui.choiceCards.clear();
+  ui.activeChoiceCard = null;
   els.messages.replaceChildren();
-  els.welcome.hidden = !data.active_project || events.some((event) => ["user", "assistant"].includes(event.kind));
+  els.welcome.hidden = !data.active_project || events.some((event) => ["user", "assistant", "choice_question"].includes(event.kind));
 
   for (const event of events) {
     if (!event || !event.kind) continue;
@@ -739,13 +746,106 @@ function renderChat(data) {
       node.dataset.eventId = event.id;
       node.classList.toggle("streaming", Boolean(event.streaming));
     }
+    else if (event.kind === "choice_question") appendChoiceQuestion(event, data);
     else if (event.kind === "system") appendMessage("system", event.text);
     else if (event.kind === "error") appendMessage("error", event.text, "ERROR");
     else if (event.kind === "tool_start") appendToolStart(event);
     else if (event.kind === "tool_result") appendToolResult(event);
   }
+  updateChoiceControls(data);
   if (!nearBottom) els.chatViewport.scrollTop = previousScrollTop;
   updateScrollPosition(nearBottom);
+}
+
+function appendChoiceQuestion(event, data) {
+  const { active_conversation_id: conversationId, state_epoch: epoch } = data;
+  const matchesDraft = draft => draft?.questionId === event.id && draft.epoch === epoch;
+  const saved = ui.choiceDrafts.get(conversationId);
+  const draft = matchesDraft(saved) ? saved : {epoch, questionId: event.id, selected: null, text: ""};
+
+  const form = document.createElement("form");
+  form.className = "message choice-question";
+  const group = document.createElement("fieldset");
+  const list = document.createElement("div");
+  list.className = "choice-options";
+  group.append(studyText("legend", event.text, "choice-question-text"), list);
+
+  function addOption(label, value) {
+    const row = document.createElement("label");
+    row.className = "choice-option";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "answer";
+    radio.value = String(value);
+    radio.addEventListener("change", () => {
+      draft.selected = value;
+      ui.choiceDrafts.set(conversationId, draft);
+      updateChoiceControls(ui.data);
+    });
+    row.append(radio, studyText("span", label));
+    list.append(row);
+    return row;
+  }
+
+  (event.options || []).forEach(addOption);
+  const otherRow = addOption("其他", "other");
+  const field = document.createElement("label");
+  field.className = "choice-other-field";
+  const textarea = document.createElement("textarea");
+  textarea.rows = 2;
+  textarea.maxLength = 20000;
+  textarea.required = true;
+  textarea.value = draft.text;
+  field.append(studyText("span", "写下你的回答"), textarea);
+  const submit = studyText("button", "提交答案", "choice-submit");
+  submit.type = "submit";
+
+  function update(active, locked) {
+    const showOther = active && draft.selected === "other";
+    if (active !== (form.dataset.active === "true")) {
+      if (active && draft.selected !== null) {
+        list.querySelector(`input[value="${draft.selected}"]`).checked = true;
+      } else {
+        const checked = list.querySelector("input:checked");
+        if (checked) checked.checked = false;
+      }
+    }
+    form.dataset.active = String(active);
+    group.disabled = !active || locked;
+    otherRow.hidden = !active;
+    field.hidden = !showOther;
+    textarea.disabled = !showOther || locked;
+    submit.hidden = !active;
+    submit.disabled = group.disabled || draft.selected === null || (showOther && !draft.text.trim());
+  }
+
+  textarea.addEventListener("input", () => {
+    draft.text = textarea.value;
+    updateChoiceControls(ui.data);
+  });
+  form.addEventListener("submit", async submission => {
+    submission.preventDefault();
+    const sameConversation = () => ui.data?.active_conversation_id === conversationId && ui.data.state_epoch === epoch;
+    if (submit.disabled || !sameConversation() || ui.data.active_question_id !== event.id) return;
+    const answer = draft.selected === "other" ? {other: draft.text.trim()} : {option_index: draft.selected};
+    const sent = await submitComposer("/api/workspace/chat/choice", {question_id: event.id, ...answer}, {preserveDraft: true});
+    if (sent && matchesDraft(ui.choiceDrafts.get(conversationId))) ui.choiceDrafts.delete(conversationId);
+    if (!sameConversation() || document.activeElement !== document.body) return;
+    if (sent) els.message.focus({preventScroll: true});
+    else if (submit.isConnected && !submit.disabled) submit.focus({preventScroll: true});
+  });
+
+  form.append(group, field, submit);
+  update(false, true);
+  ui.choiceCards.set(event.id, {update});
+  els.messages.append(form);
+}
+
+function updateChoiceControls(data) {
+  const choice = ui.choiceCards.get(data.active_question_id);
+  if (choice !== ui.activeChoiceCard) ui.activeChoiceCard?.update(false, true);
+  ui.activeChoiceCard = choice;
+  choice?.update(true, ui.pendingSend || isBusy(data.status));
 }
 
 function appendMessage(kind, text, label) {
@@ -1602,7 +1702,7 @@ async function sendMessage(event) {
   }
 }
 
-async function submitComposer(path, payload) {
+async function submitComposer(path, payload, {preserveDraft = false} = {}) {
   if (ui.pendingSend || isBusy(ui.data?.status) || ui.composing || !ui.data?.active_project) return;
   const sentDraft = els.message.value;
   const conversationId = ui.data?.active_conversation_id;
@@ -1610,15 +1710,18 @@ async function submitComposer(path, payload) {
   els.send.disabled = true;
   els.addAttachment.disabled = true;
   els.submitAttempt.disabled = true;
+  if (ui.data?.active_question_id != null) updateChoiceControls(ui.data);
   try {
     const data = await api(path, {
       method: "POST",
       body: JSON.stringify({...payload, conversation_id: conversationId}),
     });
-    // A new draft may have been typed while the request was in flight.
-    if (ui.data?.active_conversation_id === conversationId && els.message.value === sentDraft) els.message.value = "";
-    else if (ui.drafts.get(conversationId) === sentDraft) ui.drafts.delete(conversationId);
-    resizeComposer();
+    if (!preserveDraft) {
+      // A new draft may have been typed while the request was in flight.
+      if (ui.data?.active_conversation_id === conversationId && els.message.value === sentDraft) els.message.value = "";
+      else if (ui.drafts.get(conversationId) === sentDraft) ui.drafts.delete(conversationId);
+      resizeComposer();
+    }
     applyState(data);
     updateScrollPosition(true);
     return true;
@@ -1630,6 +1733,7 @@ async function submitComposer(path, payload) {
     els.send.disabled = isBusy(ui.data?.status) || !ui.data?.active_project;
     els.addAttachment.disabled = els.send.disabled;
     els.submitAttempt.disabled = isBusy(ui.data?.status) || !ui.data?.active_project || Boolean(ui.data?.lesson?.pending_review);
+    if (ui.data?.active_question_id != null) updateChoiceControls(ui.data);
   }
 }
 

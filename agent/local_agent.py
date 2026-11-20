@@ -14,6 +14,7 @@ from typing import Any, Callable
 from agent.agent_config import AgentConfig, AgentConfigError, AgentConfigStore
 from agent.command_environment import describe_environment
 from agent.errors import LLMClientError
+from agent.guidance_tools import definition
 from agent.llm_client import LLMClient
 from agent.message_history import model_history
 from agent.tools import TOOL_DEFINITIONS, ToolRuntime
@@ -64,6 +65,34 @@ SYSTEM_PROMPT = """你是 More Than Done，一位在用户本地工作区陪伴�
 """
 
 
+CHOICE_TOOL = "ask_user_choice"
+CHOICE_TOOL_DEFINITION = definition(CHOICE_TOOL, "向用户提出一个有少量明确选项的澄清问题并等待回答。单独调用，并作为本轮最后一个工具；界面自动提供‘其他’和自由输入。", {
+    "question": {"type": "string", "minLength": 1, "maxLength": 500},
+    "options": {"type": "array", "minItems": 2, "maxItems": 5, "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1, "maxLength": 100}},
+}, ["question", "options"])
+CHOICE_PROMPT = """
+对话选项：需要确认学习目标、经验、偏好或目前卡在哪，且有 2–5 个清楚、不同的常见答案时，用 ask_user_choice 提出一个问题。直接把问题放在工具参数里，不要在回复中重复问题或手写选项；界面会添加‘其他’输入框。先完成本轮必要的工具，再单独调用该工具并等待用户，不要与其他工具一起调用。开放题、需要用户自行推理的作答、独立检验和权限审批仍用原有方式；对话选项的回答不是作答记录或授权。若无法显示选项，就直接用自然语言追问。
+"""
+
+
+def _choice_content(arguments: object) -> tuple[str, list[str]]:
+    if not isinstance(arguments, dict) or set(arguments) != {"question", "options"}:
+        raise ValueError("请提供 question 和 options 两个字段。")
+    question, options = arguments["question"], arguments["options"]
+    if not isinstance(question, str) or not 1 <= len(question.strip()) <= 500:
+        raise ValueError("问题必须是 1–500 个字符的文本。")
+    if not isinstance(options, list) or not 2 <= len(options) <= 5 or any(
+        not isinstance(option, str) or not 1 <= len(option.strip()) <= 100 for option in options
+    ):
+        raise ValueError("请提供 2–5 个选项，每项 1–100 个字符。")
+    labels = [option.strip() for option in options]
+    unique = {label.casefold() for label in labels}
+    if len(unique) != len(labels) or unique & {"其他", "其它", "other"}:
+        raise ValueError("选项不能重复，也不需要提供‘其他’。")
+    return question.strip(), labels
+
+
 def _tool_call_parts(tool_call: Any) -> tuple[str, str, str]:
     if isinstance(tool_call, dict):
         call_id = str(tool_call.get("id", ""))
@@ -95,6 +124,7 @@ class LocalAgent:
         max_steps: int = 24,
         continue_requested: bool = False,
         checkpoint: Callable[[], None] | None = None,
+        choice_questions: bool = False,
     ) -> None:
         self.config = config
         self.client = client
@@ -105,6 +135,7 @@ class LocalAgent:
         self.max_steps = max_steps
         self.continue_requested = continue_requested
         self.checkpoint = checkpoint or (lambda: None)
+        self.choice_questions = choice_questions
         if self.messages and self.messages[0].get("role") == "system":
             self.messages.pop(0)
         self.messages.insert(0, {
@@ -119,7 +150,7 @@ class LocalAgent:
                 reasoning_level=config.reasoning_level,
                 permission_mode=config.permission_mode,
                 command_environment=json.dumps(describe_environment(config.workspace), ensure_ascii=False),
-            ),
+            ) + (CHOICE_PROMPT if choice_questions else ""),
         })
 
     def run(self) -> str:
@@ -135,6 +166,7 @@ class LocalAgent:
             if review_reminders:
                 context.append({"role": "system", "content": "当前作答仍未审阅。请先调用 review_learning_attempt 记录真实评价；不要用文字宣告已完成或进入下一步。"})
             holding_review = self.runtime.notebook.public()["pending_review"]
+            tools = [*TOOL_DEFINITIONS, CHOICE_TOOL_DEFINITION] if self.choice_questions and not holding_review else TOOL_DEFINITIONS
             streaming = callable(getattr(self.client, "stream_tool_call", None))
             if streaming:
                 stream_id = uuid4().hex
@@ -146,7 +178,7 @@ class LocalAgent:
                 interrupted = True
                 try:
                     message = self.client.stream_tool_call(
-                        context, tools=TOOL_DEFINITIONS, max_tokens=token_budget,
+                        context, tools=tools, max_tokens=token_budget,
                         on_delta=receive, cancel_event=self.cancel_event,
                     )
                     interrupted = False
@@ -161,7 +193,7 @@ class LocalAgent:
                     if not holding_review:
                         self.emit("assistant_end", "", {"stream_id": stream_id, "interrupted": interrupted})
             else:
-                message = self.client.complete_tool_call(context, tools=TOOL_DEFINITIONS, max_tokens=token_budget)
+                message = self.client.complete_tool_call(context, tools=tools, max_tokens=token_budget)
             content = getattr(message, "content", None)
             tool_calls = getattr(message, "tool_calls", None) or []
             if holding_review:
@@ -197,6 +229,27 @@ class LocalAgent:
                     self.emit("system", "本次执行已取消。", None)
                     return "已取消本次执行。"
                 call_id, name, raw_arguments = _tool_call_parts(tool_call)
+                if name == CHOICE_TOOL:
+                    try:
+                        if not self.choice_questions:
+                            raise ValueError("当前界面不支持对话选项，请用文字提问。")
+                        if len(tool_calls) != 1 or holding_review:
+                            raise ValueError("请先完成审阅和其他工具，再单独提出选项问题。")
+                        question, options = _choice_content(json.loads(raw_arguments))
+                    except json.JSONDecodeError:
+                        result = {"ok": False, "error": "选项参数不是有效 JSON。"}
+                    except ValueError as exc:
+                        result = {"ok": False, "error": str(exc)}
+                    else:
+                        result = {"ok": True, "waiting_for_user": True}
+                    # Close the model's call/result pair before handing the turn to the learner.
+                    self.messages.append({"role": "tool", "tool_call_id": call_id, "content": json.dumps(result, ensure_ascii=False)})
+                    if result["ok"] and not self.cancel_event.is_set():
+                        self.emit("choice_question", question, {"options": options})
+                        self.checkpoint()
+                        return question
+                    self.checkpoint()
+                    continue
                 try:
                     arguments = json.loads(raw_arguments or "{}")
                 except json.JSONDecodeError:
@@ -306,6 +359,7 @@ class AgentSession:
         self.status = "idle"
         self.pending: dict[str, Any] | None = None
         self.worker: threading.Thread | None = None
+        self.choice_questions = False
         self._client: Any | None = None
         self.cancel_event = threading.Event()
         self._approval_event: threading.Event | None = None
@@ -335,6 +389,8 @@ class AgentSession:
 
     def emit(self, kind: str, text: str, extra: dict[str, Any] | None = None) -> None:
         with self.lock:
+            if kind == "choice_question" and self.cancel_event.is_set():
+                return
             if kind in {"assistant_delta", "assistant_end"}:
                 extra = extra or {}
                 event = next((item for item in reversed(self.events) if item.get("stream_id") == extra.get("stream_id")), None)
@@ -392,7 +448,8 @@ class AgentSession:
             return config.public()
 
     def send(self, message: object, *, intent: str = "chat", artifacts=None,
-             prediction=None, confidence=None, observed_result=None) -> None:
+             prediction=None, confidence=None, observed_result=None,
+             choice_question: str | None = None) -> None:
         if not isinstance(message, str) or not message.strip():
             raise ValueError("消息不能为空。")
         if len(message) > 20_000:
@@ -406,7 +463,7 @@ class AgentSession:
             continue_requested = False
             navigation = message.strip().lower().rstrip("。！! .")
             lesson = self.lesson.public()
-            if intent == "chat" and not artifacts and lesson.get("current_step") and navigation in {"继续", "下一步", "继续下一步", "开始下一步", "进入下一步", "继续吧", "下一步吧", "好，继续", "好的，继续", "好继续", "好的继续", "next", "continue"}:
+            if intent == "chat" and not artifacts and choice_question is None and lesson.get("current_step") and navigation in {"继续", "下一步", "继续下一步", "开始下一步", "进入下一步", "继续吧", "下一步吧", "好，继续", "好的，继续", "好继续", "好的继续", "next", "continue"}:
                 if lesson["pending_review"]:
                     continue_requested = True
                 elif lesson["can_continue"]:
@@ -426,8 +483,10 @@ class AgentSession:
             self._approval_event = None
             self.pending = None
             self.status = "running"
-            user_message = {"role": "user", "content": message.strip()}
             display_text = message.strip()
+            # Keep short choices intelligible even if the previous turn is trimmed from model history.
+            model_text = f"我对问题「{choice_question}」的回答：\n{display_text}" if choice_question is not None else display_text
+            user_message = {"role": "user", "content": model_text}
             if intent == "chat" and artifacts:
                 user_message["attachments"] = artifacts
                 display_text += "\n\n附件：" + "、".join(item["name"] for item in artifacts)
@@ -448,6 +507,30 @@ class AgentSession:
                 self._changed_locked()
                 raise
             self.worker.start()
+
+    def _active_question_locked(self) -> dict[str, Any] | None:
+        if not self.choice_questions or self.status != "idle" or not self.events:
+            return None
+        latest = self.events[-1]
+        return latest if latest.get("kind") == "choice_question" else None
+
+    def answer_choice(self, question_id: object, *, option_index: object = None, other: object = None) -> None:
+        with self.lock:
+            if type(question_id) is not int or question_id < 1:
+                raise ValueError("问题编号无效。")
+            question = self._active_question_locked()
+            if question is None or question_id != question["id"]:
+                raise RuntimeError("此问题已不是当前待回答的问题，请查看最新对话。")
+            if (option_index is None) == (other is None):
+                raise ValueError("请选择一个选项，或填写‘其他’。")
+            if option_index is not None:
+                options = question.get("options", [])
+                if type(option_index) is not int or not 0 <= option_index < len(options):
+                    raise ValueError("所选选项无效。")
+                answer = options[option_index]
+            else:
+                answer = other.strip() if isinstance(other, str) else other
+            self.send(answer, choice_question=question["text"])
 
     def checkpoint(self) -> None:
         if self.on_update is not None:
@@ -470,6 +553,7 @@ class AgentSession:
                 cancel_event=cancel_event,
                 continue_requested=continue_requested,
                 checkpoint=self.checkpoint,
+                choice_questions=self.choice_questions,
             )
             agent.run()
             if self.lesson.public()["pending_review"]:
@@ -641,6 +725,7 @@ class AgentSession:
 
     def snapshot(self, after: int = 0) -> dict[str, Any]:
         with self.lock:
+            question = self._active_question_locked()
             try:
                 config = self.load_config(require_workspace=False)
                 public = config.public()
@@ -656,6 +741,7 @@ class AgentSession:
                 "next_id": self.next_event_id - 1,
                 "status": self.status,
                 "pending": self.pending,
+                "active_question_id": question["id"] if question is not None else None,
                 "config": public,
                 "config_error": config_error,
                 "lesson": self.lesson.public(),

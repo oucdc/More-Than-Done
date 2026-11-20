@@ -101,7 +101,8 @@ def main() -> int:
             text_select=True,
             js_api=desktop_api,
         )
-        webview.start(gui="edgechromium", debug=args.debug)
+        icon_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        webview.start(gui="edgechromium", debug=args.debug, icon=str(icon_root / "branding" / "MTD.ico"))
     finally:
         server.shutdown()
         server.server_close()

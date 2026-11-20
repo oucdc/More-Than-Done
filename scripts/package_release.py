@@ -16,7 +16,8 @@ executable = release_dir / "MoreThanDone.exe"
 if not executable.is_file():
     raise SystemExit(f"Build the executable first: {executable}")
 shutil.copy2(root / f"RELEASE_NOTES_{APP_VERSION}.zh-CN.md", release_dir / "使用说明.md")
-for public_notice in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+public_docs = ("LICENSE", "THIRD_PARTY_NOTICES.md", "CHANGELOG.zh-CN.md")
+for public_notice in public_docs:
     notice = root / public_notice
     if notice.is_file():
         text = notice.read_text(encoding="utf-8")
@@ -52,7 +53,8 @@ for dist in metadata.distributions():
 archive = root / "dist" / f"{release_name}.zip"
 with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as output:
     for path in sorted(release_dir.rglob("*")):
-        if path.is_file() and (path == executable or path.name in {"使用说明.md", "LICENSE", "THIRD_PARTY_NOTICES.md"} or licenses in path.parents):
+        root_file = path.parent == release_dir and path.name in {executable.name, "使用说明.md", *public_docs}
+        if path.is_file() and (root_file or licenses in path.parents):
             output.write(path, Path(release_name) / path.relative_to(release_dir))
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 (root / "dist" / f"{release_name}.sha256.txt").write_text(f"{digest}  {archive.name}\n", encoding="ascii")
