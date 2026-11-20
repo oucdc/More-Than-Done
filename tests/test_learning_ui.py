@@ -34,7 +34,7 @@ def test_only_attempt_submission_sends_artifacts_and_prediction():
     run_js(r'''
 const assert = require('node:assert/strict');
 const els = new Proxy({}, {get: (target, key) => target[key] ||= {value: '', disabled: false, focus() {}}});
-const ui = {data: {active_conversation_id: 'A', active_project: {}, status: 'idle'}, drafts: new Map()};
+const ui = {data: {active_conversation_id: 'A', active_project: {}, status: 'idle'}, drafts: new Map(), attachmentDrafts: new Map()};
 const isBusy = () => false, resizeComposer = () => {}, updateScrollPosition = () => {};
 const applyState = value => { ui.data = value; };
 function toast(value) { throw Error(value); }

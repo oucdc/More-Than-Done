@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from uuid import uuid4
 
-from agent.tools import ToolRuntime
+from agent.tools import ToolRuntime, is_sensitive_path
 from learning.guidance import artifact_snapshots
 
 
@@ -100,6 +100,79 @@ def capture_artifacts(config, paths):
                        {"name": "文件包含文本", "passed": bool(content.strip())}],
         })
         seen.add(path)
+    return captured
+
+
+def search_attachment_paths(config, query):
+    """List matching workspace paths without loading their contents."""
+    if not config.allow_read:
+        raise ValueError("当前权限不允许读取工作区文件。")
+    query = query[:300].replace("\\", "/").casefold()
+    root = config.workspace.resolve()
+    matches = []
+    scanned = 0
+    for current, directories, files in os.walk(root):
+        folder = Path(current)
+        directories[:] = sorted(name for name in directories
+                                if not name.startswith(".") and name not in {"node_modules", "__pycache__", "venv"}
+                                and (folder / name).resolve() == folder / name)
+        scanned += len(directories) + len(files)
+        for name in sorted(files):
+            path = folder / name
+            relative = path.relative_to(root).as_posix()
+            if query not in relative.casefold() or name.startswith(".") or path.suffix.casefold() == ".pdf":
+                continue
+            try:
+                if path.resolve() == path and path.is_file() and not is_sensitive_path(path) and path.stat().st_size <= 80_000:
+                    matches.append(relative)
+            except OSError:
+                continue
+            if len(matches) >= 30:
+                return matches
+        if scanned >= 10_000:
+            break
+    return matches
+
+
+def capture_chat_attachments(config, attachments):
+    """Resolve workspace references and validate text explicitly selected by the user."""
+    if not isinstance(attachments, list) or len(attachments) > 3:
+        raise ValueError("每条消息最多附加 3 个文本文件。")
+    paths = []
+    captured = []
+    root = config.workspace.resolve()
+    for item in attachments:
+        if not isinstance(item, dict):
+            raise ValueError("附件格式无效。")
+        if set(item) == {"path"}:
+            raw = item["path"]
+            if not isinstance(raw, str) or not raw.strip() or len(raw) > 4096 or "\0" in raw:
+                raise ValueError("附件路径无效。")
+            path = root / raw
+            if not path.resolve().is_relative_to(root):
+                raise ValueError("请选择当前工作区内的文件。")
+            if is_sensitive_path(path):
+                raise ValueError("不能附加凭据文件。")
+            paths.append(raw)
+        elif set(item) == {"name", "content"}:
+            name, content = item["name"], item["content"]
+            if (not isinstance(name, str) or not name.strip() or len(name) > 255
+                    or any(ord(char) < 32 or 0xD800 <= ord(char) <= 0xDFFF or char in "/\\:" for char in name)):
+                raise ValueError("附件文件名无效。")
+            if name.casefold() == ".env.example" or is_sensitive_path(Path(name)):
+                raise ValueError("不能附加凭据文件。")
+            captured.append({"name": name, "content": content})
+        else:
+            raise ValueError("附件格式无效。")
+    captured.extend({"name": item["path"], "content": item["content"]}
+                    for item in capture_artifacts(config, paths))
+    for item in captured:
+        content = item["content"]
+        if (not isinstance(content, str) or "\0" in content
+                or any(0xD800 <= ord(char) <= 0xDFFF for char in content)):
+            raise ValueError("附件仅支持 UTF-8 文本文件。")
+        if len(content) > 20_000:
+            raise ValueError("单个附件最多 20,000 个字符。")
     return captured
 
 

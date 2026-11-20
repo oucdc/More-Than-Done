@@ -38,6 +38,7 @@ const els = new Proxy({message}, {get: (target, key) => target[key] ||= {disable
 const document = {body: {classList: {toggle: stub}}, querySelectorAll: () => []};
 const isBusy = status => status === 'running';
 const resizeComposer = stub, closeConversationMenu = stub, closeProjectMenu = stub;
+const closeAttachmentPicker = stub, renderAttachments = stub;
 const renderSidebar = stub, renderTopbar = stub, renderChat = stub, renderApproval = stub;
 const renderStatus = stub, renderConfigState = stub, renderLesson = stub;
 const renderArchived = stub, renderEnvironment = stub, updateScrollPosition = stub;

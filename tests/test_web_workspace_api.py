@@ -35,6 +35,55 @@ def request(base, path, *, method="GET", payload=None):
         return exc.code, exc.read().decode("utf-8")
 
 
+def test_chat_attachments_from_workspace_and_local_picker_reach_the_model(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "notes.txt").write_text("工作区附件正文", encoding="utf-8")
+    (workspace / ".env").write_text("DEEPSEEK_API_KEY=example", encoding="utf-8")
+    config = AgentConfigStore(tmp_path / "agent_config.json", settings_loader=no_env_settings)
+    config.update({"workspace": str(workspace), "api_key": "test-only"})
+    conversations = ConversationStore(tmp_path / "conversations.json")
+    server = web_ui.MoreThanDoneHTTPServer(("127.0.0.1", 0), object(), config_store=config, conversation_store=conversations)
+    state = server.workspace.create_project({"workspace": str(workspace)})
+    conversation_id = state["active_conversation_id"]
+    received = []
+
+    class AttachmentClient(FakeClient):
+        def complete_tool_call(self, messages, *, tools, max_tokens):
+            received.append(messages[-1])
+            return super().complete_tool_call(messages, tools=tools, max_tokens=max_tokens)
+
+    server.agent.client_factory = lambda _settings: AttachmentClient()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    chat = {"message": "比较两个附件", "conversation_id": conversation_id}
+    try:
+        status, body = request(base, f"/api/workspace/attachment-paths?conversation_id={conversation_id}")
+        assert status == 200 and json.loads(body)["paths"] == ["notes.txt"]
+        status, _ = request(base, "/api/workspace/chat", method="POST", payload={**chat, "attachments": [{"path": ".env"}]})
+        assert status == 400 and not received
+        status, _ = request(base, "/api/workspace/chat", method="POST", payload={**chat, "attachments": [
+            {"path": "notes.txt"}, {"name": "picked.md", "content": "本机附件正文"},
+        ]})
+        assert status == 200
+        deadline = time.monotonic() + 5
+        while server.agent.snapshot()["status"] != "idle" and time.monotonic() < deadline:
+            time.sleep(0.02)
+        user_message, = received
+        assert set(user_message) == {"role", "content"}
+        assert "工作区附件正文" in user_message["content"] and "本机附件正文" in user_message["content"]
+        saved = conversations.load()["conversations"][0]
+        assert saved["title"] == chat["message"]
+        display = next(event["text"] for event in saved["events"] if event["kind"] == "user")
+        assert "notes.txt" in display and "picked.md" in display
+        assert "附件正文" not in display
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_workspace_page_and_api_flow(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
