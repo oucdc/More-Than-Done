@@ -137,9 +137,18 @@
                 <p class="muted-note">提交时保存所选文本文件的快照，导师会结合你的思路审阅。</p>
               </div>
             </details>
-            <textarea id="message" rows="3" maxlength="20000" aria-label="学习目标、问题或你的尝试" placeholder="你想学会什么？也可以写下你的思路、操作结果或卡住的地方…"></textarea>
+            <div class="attachment-anchor">
+              <div class="attachment-picker" id="attachment-picker" role="group" aria-label="工作区文件建议" hidden>
+                <div class="attachment-status" id="attachment-status" role="status"></div>
+                <div class="attachment-results" id="attachment-results"></div>
+              </div>
+            </div>
+            <textarea id="message" rows="3" maxlength="20000" aria-label="学习目标、问题或你的尝试" aria-controls="attachment-picker" placeholder="你想学会什么？输入 @ 可添加工作区文件…"></textarea>
+            <div class="attachment-chips" id="attachment-chips" aria-label="待发送的提问附件" hidden></div>
+            <input id="attachment-input" type="file" multiple hidden>
             <div class="composer-bottom">
               <div class="composer-hints">
+                <button class="button ghost attachment-button" id="add-attachment" type="button" title="为提问添加 UTF-8 文本附件" disabled>添加文件</button>
                 <div class="permission-control">
                   <button class="permissions-button" id="permissions-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="permission-menu">
                     <span aria-hidden="true">◈</span><span id="permission-summary">请求批准</span><span aria-hidden="true">⌄</span>

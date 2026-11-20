@@ -96,7 +96,11 @@ def model_history(messages, limit=200, *, max_chars=120_000):
                     del pending[call_id]
                 continue
             complete_pending()
-            result.append(message)
+            if message.get("role") == "user" and "attachments" in message:
+                content = message["content"] + "\n\n[附件资料]\n" + json.dumps(message["attachments"], ensure_ascii=False)
+                result.append({"role": "user", "content": content})
+            else:
+                result.append(message)
             if message.get("role") == "assistant":
                 pending.update({call["id"]: True for call in message.get("tool_calls", []) if call.get("id")})
     complete_pending()

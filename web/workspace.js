@@ -64,6 +64,9 @@ const els = {
   reject: $("#reject"),
   chatForm: $("#chat-form"),
   message: $("#message"),
+  addAttachment: $("#add-attachment"), attachmentInput: $("#attachment-input"),
+  attachmentChips: $("#attachment-chips"), attachmentPicker: $("#attachment-picker"),
+  attachmentResults: $("#attachment-results"), attachmentStatus: $("#attachment-status"),
   send: $("#send"),
   cancel: $("#cancel"),
   openSettings: $("#open-settings"),
@@ -147,6 +150,7 @@ const ui = {
   deleting: false,
   editingConversationId: null,
   drafts: new Map(),
+  attachmentDrafts: new Map(), mention: null,
   choiceCards: new Map(),
   choiceDrafts: new Map(),
   activeChoiceCard: null,
@@ -345,6 +349,10 @@ function applyState(data) {
     resizeComposer();
   }
   ui.data = data;
+  if (previousId !== data.active_conversation_id) {
+    closeAttachmentPicker();
+    renderAttachments();
+  }
   const config = data.config || {};
   const busy = isBusy(data.status);
   if (busy || (ui.contextConversationId && !data.conversations?.some(item => item.id === ui.contextConversationId))) closeConversationMenu();
@@ -523,6 +531,8 @@ function renderTopbar(data, config, busy) {
   els.modelSelect.disabled = busy;
   els.reasoningSelect.disabled = busy;
   els.send.disabled = busy || ui.pendingSend || !hasProject;
+  els.addAttachment.disabled = !hasProject || busy || ui.pendingSend;
+  if (els.addAttachment.disabled && ui.mention) closeAttachmentPicker();
   els.message.disabled = !hasProject;
   els.cancel.disabled = !busy;
   els.saveSettings.disabled = busy;
@@ -1550,11 +1560,146 @@ async function newConversation(projectId = null) {
   }
 }
 
+function renderAttachments() {
+  const conversationId = ui.data?.active_conversation_id;
+  const files = ui.attachmentDrafts.get(conversationId) || [];
+  els.attachmentChips.hidden = !files.length;
+  els.attachmentChips.replaceChildren(...files.map((file, index) => {
+    const name = file.path || file.name;
+    const chip = studyText("div", "", "attachment-chip");
+    const label = studyText("span", name);
+    label.title = name;
+    const remove = studyText("button", "×");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `移除附件 ${name}`);
+    remove.addEventListener("click", () => {
+      ui.attachmentDrafts.set(conversationId, files.filter((_, i) => i !== index));
+      renderAttachments();
+      els.message.focus();
+    });
+    chip.append(label, remove);
+    return chip;
+  }));
+}
+
+function addAttachments(files) {
+  const conversationId = ui.data?.active_conversation_id;
+  if (!conversationId) return false;
+  const draft = [...(ui.attachmentDrafts.get(conversationId) || [])];
+  for (const file of files) {
+    if (file.path && draft.some(item => item.path === file.path)) continue;
+    draft.push(file);
+  }
+  if (draft.length > 3) { toast("每条提问最多添加 3 个文本文件。", true); return false; }
+  ui.attachmentDrafts.set(conversationId, draft);
+  renderAttachments();
+  return true;
+}
+
+async function readLocalAttachments() {
+  const files = [...els.attachmentInput.files];
+  els.attachmentInput.value = "";
+  const conversationId = ui.filePickerConversation;
+  if (!files.length || conversationId !== ui.data?.active_conversation_id) return;
+  if (files.length + (ui.attachmentDrafts.get(conversationId)?.length || 0) > 3) {
+    toast("每条提问最多添加 3 个文本文件。", true);
+    return;
+  }
+  try {
+    const attachments = await Promise.all(files.map(async file => {
+      if (file.size > 80000) throw new Error(`${file.name} 超过单个附件的大小限制。`);
+      let content;
+      try { content = new TextDecoder("utf-8", {fatal: true}).decode(await file.arrayBuffer()); }
+      catch { throw new Error(`无法读取 ${file.name}，请选择 UTF-8 文本文件。`); }
+      if (content.includes("\0") || /\.pdf$/i.test(file.name)) throw new Error(`${file.name} 不是受支持的 UTF-8 文本文件。`);
+      if ([...content].length > 20000) throw new Error(`${file.name} 超过 20,000 个字符。`);
+      return {name: file.name, content};
+    }));
+    if (conversationId === ui.data?.active_conversation_id) addAttachments(attachments);
+  } catch (error) { toast(error.message, true); }
+}
+
+function closeAttachmentPicker() {
+  clearTimeout(ui.mention?.timer);
+  ui.mention = null;
+  els.attachmentPicker.hidden = true;
+}
+
+function updateAttachmentPicker() {
+  closeAttachmentPicker();
+  const {value, selectionStart, selectionEnd} = els.message;
+  if (ui.composing || els.addAttachment.disabled || selectionStart !== selectionEnd) return;
+  // Do not trigger in an email address; both @ and the Chinese full-width ＠ work.
+  const match = value.slice(0, selectionStart).match(/(?:^|[^A-Za-z0-9_.%+-])([@＠]([^\s@＠]*))$/u);
+  const conversationId = ui.data?.active_conversation_id;
+  if (!match || !conversationId) return;
+  const start = selectionStart - match[1].length;
+  const end = selectionStart + value.slice(selectionStart).match(/^[^\s@＠]*/u)[0].length;
+  const mention = {start, end, value};
+  ui.mention = mention;
+  els.attachmentStatus.textContent = "正在查找工作区文件…";
+  els.attachmentResults.replaceChildren();
+  els.attachmentPicker.hidden = false;
+  mention.timer = setTimeout(async () => {
+    try {
+      const query = new URLSearchParams({q: match[2].slice(0, 300), conversation_id: conversationId});
+      const {paths} = await api(`/api/workspace/attachment-paths?${query}`);
+      if (ui.mention !== mention) return;
+      els.attachmentStatus.textContent = paths.length ? "工作区文件 · ↑↓ 选择，Enter 添加" : "没有找到匹配的工作区文件。";
+      for (const path of paths) {
+        const option = studyText("button", path, "attachment-option");
+        option.type = "button";
+        option.addEventListener("click", () => {
+          if (ui.mention !== mention || els.message.value !== value || !addAttachments([{path}])) return;
+          els.message.setRangeText("", start, end, "end");
+          closeAttachmentPicker();
+          resizeComposer();
+          els.message.focus();
+        });
+        els.attachmentResults.append(option);
+      }
+    } catch (error) {
+      if (ui.mention === mention) els.attachmentStatus.textContent = error.message;
+    }
+  }, 150);
+}
+
+function attachmentPickerKey(event) {
+  if (!ui.mention) return false;
+  const options = [...els.attachmentResults.children];
+  if (event.key === "Escape") {
+    closeAttachmentPicker();
+    els.message.focus();
+  } else if (options.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+    const current = options.indexOf(document.activeElement);
+    const next = current < 0 ? (event.key === "ArrowDown" ? 0 : options.length - 1)
+      : (current + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+    options[next].focus();
+  } else if (event.key === "Enter" && !event.shiftKey && event.target === els.message) {
+    options[0]?.click();
+  } else {
+    return false;
+  }
+  event.preventDefault();
+  return true;
+}
+
 async function sendMessage(event) {
   event.preventDefault();
   const text = els.message.value.trim();
-  if (!text) return;
-  await submitComposer("/api/workspace/chat", {message: text});
+  const conversationId = ui.data?.active_conversation_id;
+  const attachments = ui.attachmentDrafts.get(conversationId);
+  if (!attachments?.length) {
+    if (text) await submitComposer("/api/workspace/chat", {message: text});
+    return;
+  }
+  const sent = await submitComposer("/api/workspace/chat", {message: text || "请概述这些附件的内容。", attachments});
+  if (sent) {
+    const remaining = (ui.attachmentDrafts.get(conversationId) || []).filter(file => !attachments.includes(file));
+    if (remaining.length) ui.attachmentDrafts.set(conversationId, remaining);
+    else ui.attachmentDrafts.delete(conversationId);
+    if (conversationId === ui.data?.active_conversation_id) renderAttachments();
+  }
 }
 
 async function submitComposer(path, payload, {preserveDraft = false} = {}) {
@@ -1563,6 +1708,7 @@ async function submitComposer(path, payload, {preserveDraft = false} = {}) {
   const conversationId = ui.data?.active_conversation_id;
   ui.pendingSend = true;
   els.send.disabled = true;
+  els.addAttachment.disabled = true;
   els.submitAttempt.disabled = true;
   if (ui.data?.active_question_id != null) updateChoiceControls(ui.data);
   try {
@@ -1585,6 +1731,7 @@ async function submitComposer(path, payload, {preserveDraft = false} = {}) {
   } finally {
     ui.pendingSend = false;
     els.send.disabled = isBusy(ui.data?.status) || !ui.data?.active_project;
+    els.addAttachment.disabled = els.send.disabled;
     els.submitAttempt.disabled = isBusy(ui.data?.status) || !ui.data?.active_project || Boolean(ui.data?.lesson?.pending_review);
     if (ui.data?.active_question_id != null) updateChoiceControls(ui.data);
   }
@@ -1824,14 +1971,31 @@ document.addEventListener("click", event => { if (!event.target.closest("#conver
 document.addEventListener("scroll", () => closeConversationMenu(), true);
 window.addEventListener("resize", () => closeConversationMenu());
 els.message.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !ui.composing && event.keyCode !== 229) {
+  if (event.isComposing || ui.composing || event.keyCode === 229) return;
+  if (attachmentPickerKey(event)) return;
+  if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     els.chatForm.requestSubmit();
   }
 });
-els.message.addEventListener("compositionstart", () => { ui.composing = true; });
-els.message.addEventListener("compositionend", () => { ui.composing = false; resizeComposer(); });
-els.message.addEventListener("input", resizeComposer);
+els.message.addEventListener("compositionstart", () => { ui.composing = true; closeAttachmentPicker(); });
+els.message.addEventListener("compositionend", () => { ui.composing = false; resizeComposer(); updateAttachmentPicker(); });
+els.message.addEventListener("input", () => { resizeComposer(); updateAttachmentPicker(); });
+els.message.addEventListener("click", updateAttachmentPicker);
+els.message.addEventListener("keyup", event => {
+  if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) updateAttachmentPicker();
+});
+els.attachmentResults.addEventListener("keydown", attachmentPickerKey);
+els.addAttachment.addEventListener("click", () => {
+  ui.filePickerConversation = ui.data?.active_conversation_id;
+  els.attachmentInput.click();
+});
+els.attachmentInput.addEventListener("change", readLocalAttachments);
+for (const type of ["pointerdown", "focusin"]) {
+  document.addEventListener(type, event => {
+    if (event.target !== els.message && !els.attachmentPicker.contains(event.target)) closeAttachmentPicker();
+  });
+}
 els.chatViewport.addEventListener("scroll", () => updateScrollPosition(), {passive: true});
 els.jumpLatest.addEventListener("click", () => { updateScrollPosition(true); els.message.focus(); });
 els.newChat.addEventListener("click", () => newConversation());

@@ -12,7 +12,10 @@ from agent.agent_config import AgentConfigStore
 from agent.command_environment import describe_environment
 from agent.conversations import ConversationStore, ConversationStoreError
 from agent.local_agent import AgentSession
-from agent.artifacts import capture_artifacts, create_practice, discard_practice, practice_state
+from agent.artifacts import (
+    capture_artifacts, capture_chat_attachments, create_practice, discard_practice,
+    practice_state, search_attachment_paths,
+)
 from config import PROJECT_ROOT
 from learning.portfolio import build_portfolio
 
@@ -517,11 +520,22 @@ class WorkspaceManager:
         if conversation_id is not None and conversation_id != self._loaded_conversation_id:
             raise RuntimeError("对话已切换，请确认当前对话后重新发送。")
 
-    def send(self, message: object, *, conversation_id: object = None) -> dict[str, Any]:
+    def attachment_paths(self, query: str, *, conversation_id: object) -> list[str]:
         with self.lock:
             self._require_project_locked()
             self._check_target_locked(conversation_id)
-            self.session.send(message)
+            config = self.session.load_config()
+        return search_attachment_paths(config, query)
+
+    def send(self, message: object, *, conversation_id: object = None, attachments=None) -> dict[str, Any]:
+        with self.lock:
+            self._require_project_locked()
+            self._check_target_locked(conversation_id)
+            captured = []
+            if attachments is not None:
+                self._assert_idle_locked()
+                captured = capture_chat_attachments(self.session.load_config(), attachments)
+            self.session.send(message, artifacts=captured)
             return self._state_locked()
 
     def answer_choice(self, question_id: object, *, conversation_id: object,

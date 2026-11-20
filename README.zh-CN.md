@@ -2,11 +2,11 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**0.2.1 版 · Windows 桌面学习工作台**
+**0.2.3 版 · Windows 桌面学习工作台**
 
 More Than Done 是一款教育 AI Agent，帮助你理解任务、亲手尝试、获得反馈，并逐步独立完成。它把本地项目、流式聊天和由程序记录进度的学习计划放在同一个工作台中。
 
-[0.2.1 发行说明](RELEASE_NOTES_0.2.1.zh-CN.md) · [版本变更记录](CHANGELOG.zh-CN.md)
+[0.2.3 发行说明](RELEASE_NOTES_0.2.3.zh-CN.md) · [版本变更记录](CHANGELOG.zh-CN.md)
 
 ## 功能
 
@@ -92,7 +92,7 @@ Node.js 只用于 JavaScript 语法检查。原生布局验收依赖 Edge WebVie
 构建 Windows EXE 并整理便携发行包：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.2.1-windows-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_desktop.ps1 -OutputDirectory .\dist\MoreThanDone-0.2.3-windows-x64
 .\.venv\Scripts\python.exe -m scripts.package_release
 ```
 

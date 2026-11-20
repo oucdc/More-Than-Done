@@ -359,7 +359,8 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("请求长度无效。") from exc
-        if length < 0 or length > MAX_REQUEST_BYTES:
+        max_bytes = 500_000 if self.path == "/api/workspace/chat" else MAX_REQUEST_BYTES
+        if length < 0 or length > max_bytes:
             raise ValueError("请求内容过大。")
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -378,7 +379,7 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/security":
             self._json(200, {"ready": True})
             return
-        if parsed.path in {"/api/workspace/portfolio", "/api/workspace/history", "/api/workspace/practice-copy"}:
+        if parsed.path in {"/api/workspace/portfolio", "/api/workspace/history", "/api/workspace/practice-copy", "/api/workspace/attachment-paths"}:
             try:
                 if parsed.path.endswith("/portfolio"):
                     result = self.server.workspace.portfolio()
@@ -387,6 +388,11 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
                     result = self.server.workspace.history(query.get("conversation_id", [""])[0],
                                                            int(query.get("before", ["0"])[0]),
                                                            int(query.get("limit", ["100"])[0]))
+                elif parsed.path.endswith("/attachment-paths"):
+                    query = parse_qs(parsed.query)
+                    result = {"paths": self.server.workspace.attachment_paths(
+                        query.get("q", [""])[0], conversation_id=query.get("conversation_id", [""])[0],
+                    )}
                 else:
                     query = parse_qs(parsed.query)
                     result = self.server.workspace.practice(conversation_id=query.get("conversation_id", [None])[0])
@@ -553,7 +559,8 @@ class MoreThanDoneRequestHandler(BaseHTTPRequestHandler):
                 elif self.path == "/api/workspace/config":
                     state = self.server.workspace.save_config(payload)
                 elif self.path == "/api/workspace/chat":
-                    state = self.server.workspace.send(payload.get("message"), conversation_id=payload.get("conversation_id") or "")
+                    state = self.server.workspace.send(payload.get("message"), conversation_id=payload.get("conversation_id") or "",
+                                                       attachments=payload.get("attachments"))
                 elif self.path == "/api/workspace/chat/choice":
                     if ("option_index" in payload) == ("other" in payload):
                         raise ValueError("请选择一个选项，或填写‘其他’。")

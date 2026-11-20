@@ -605,6 +605,18 @@ button, select, input, textarea { transition: border-color .16s ease, background
 .composer { width: min(860px, 100%); padding: 14px 14px 11px; border-color: #d1dfd3; border-radius: 16px; background: #fff; box-shadow: 0 10px 32px #294b3310; }
 .composer:focus-within { border-color: #77a989; box-shadow: 0 0 0 3px #dcefe0, 0 10px 32px #294b3310; }
 .composer textarea::placeholder { color: #809087; }
+.attachment-anchor { position: relative; }
+.attachment-picker { position: absolute; z-index: 18; bottom: 8px; left: 0; width: min(380px, 100%); padding: 7px; border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: 0 8px 24px #294b3320; }
+.attachment-status { padding: 4px 7px; color: #54695d; font-size: .8125rem; }
+.attachment-results { max-height: min(220px, 34vh); overflow: auto; }
+.attachment-option { display: block; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); text-align: left; overflow-wrap: anywhere; }
+.attachment-option:hover, .attachment-option:focus-visible { background: #edf5ef; }
+.attachment-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.attachment-chips[hidden] { display: none; }
+.attachment-chip { display: flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 4px 2px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font-size: .8125rem; }
+.attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-chip button { flex-shrink: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; padding: 3px 6px; }
+.attachment-button { min-height: 32px; }
 .composer-hints { color: #708177; }
 .permissions-button { min-height: 32px; color: #436451; border-radius: 8px; }
 .send-button { min-height: 38px; padding: 8px 16px; border-radius: 10px; }
